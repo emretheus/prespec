@@ -44,6 +44,19 @@ const DOMAIN_TERMS = {
     "permission", "permissions", "role", "roles", "credential", "credentials",
     "password", "oauth", "sso", "access control", "protected", "secure",
   ],
+  "backend/rest-api/validation": [
+    "validation", "validate", "input", "payload", "body", "field", "fields",
+    "form", "schema", "parameter", "parameters", "required", "optional",
+    "sanitize", "sanitise", "reject", "accept", "create", "update", "patch",
+    "submit", "post", "endpoint", "api", "request", "type", "types",
+  ],
+  "frontend/async-ui/race-conditions": [
+    "search", "filter", "filtering", "autocomplete", "typeahead", "debounce",
+    "fetch", "fetching", "loading", "spinner", "skeleton", "async",
+    "request", "refresh", "reload", "poll", "polling", "tab", "tabs",
+    "infinite", "scroll", "optimistic", "retry", "stale", "cache",
+    "component", "screen", "view", "page", "render", "display", "show",
+  ],
 };
 
 /** Split free text into meaningful lowercase terms. */

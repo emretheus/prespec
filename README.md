@@ -218,6 +218,8 @@ Install the skill by copying `skills/prespec/` into `~/.claude/skills/`.
 |---|---|
 | `backend/rest-api/pagination` | 15 |
 | `backend/auth/token-lifecycle` | 15 |
+| `backend/rest-api/validation` | 12 |
+| `frontend/async-ui/race-conditions` | 12 |
 
 Deliberately narrow. Two domains of real cases are worth more than forty of
 generic filler, and a bank that pads itself to look comprehensive is one you

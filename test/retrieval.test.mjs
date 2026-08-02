@@ -22,10 +22,19 @@ describe("domain matching", () => {
       ["signing users in", "backend/auth/token-lifecycle"],
       ["users can browse their order history", "backend/rest-api/pagination"],
       ["paginated list of invoices", "backend/rest-api/pagination"],
+      ["endpoint to create a new invoice", "backend/rest-api/validation"],
+      [
+        "a search box that filters results as you type",
+        "frontend/async-ui/race-conditions",
+      ],
+      ["infinite scrolling feed", "frontend/async-ui/race-conditions"],
     ];
 
     for (const [phrase, expected] of phrasings) {
-      const r = spec({ feature_description: phrase, side: "backend" });
+      const r = spec({
+        feature_description: phrase,
+        side: expected.split("/")[0],
+      });
       assert.ok(
         r.matched_domains.includes(expected),
         `"${phrase}" should match ${expected}, got [${r.matched_domains}]`,

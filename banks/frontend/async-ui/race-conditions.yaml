@@ -1,0 +1,420 @@
+domain: frontend/async-ui/race-conditions
+side: frontend
+version: 1
+description: >
+  What happens when the network and the user move at different speeds: responses
+  arriving out of order, arriving after the thing that asked for them is gone,
+  or arriving for a question the user has already stopped asking. These are
+  timing bugs, so they reproduce on slow connections and disappear on fast ones,
+  which is why they reach production. Excludes form submission specifically,
+  which lives in frontend/forms/submission.
+
+cases:
+  - id: async.core.result-matches-the-request
+    title: The displayed result belongs to the latest request
+    category: happy-path
+    risk: foundational
+    applies_when:
+      - any view that fetches data in response to user input
+    why: >
+      The property every other case here protects, and the one nobody writes a
+      test for because on a fast connection it is impossible to violate. State
+      it explicitly so the others have something to be exceptions to.
+    observable: >
+      After the user changes the input and the interface settles, the content on
+      screen corresponds to the current input value. Repeating the same input
+      change produces the same displayed result, and no earlier input's result
+      is on screen once loading has finished.
+    given_when_then:
+      given: "A search view with results for query A displayed"
+      when: "The user types query B and waits for loading to finish"
+      then: "The results shown are for query B"
+    automatable: yes
+    seen_in:
+      - source: "Defining property of a data-fetching view"
+        kind: folklore
+        verified: false
+    related:
+      - async.ordering.stale-response-overwrites-fresh
+
+  - id: async.ordering.stale-response-overwrites-fresh
+    title: A slower earlier request lands after a faster later one
+    category: race
+    risk: high
+    applies_when:
+      - typing, filtering, or tab switching triggers a fetch
+      - responses are applied to state as they arrive
+    question: >
+      If the user types "ab" and the request for "a" is slower than the one for
+      "ab", which results end up on screen?
+    why: >
+      Requests are fired per keystroke and each handler writes the result to the
+      same state. Nothing guarantees responses return in the order they were
+      sent, and the last write wins regardless of which question it answered.
+      The interface shows results for a query the user typed two keystrokes ago,
+      looking merely wrong rather than broken.
+    observable: >
+      When several requests are in flight for different inputs, only the
+      response for the most recent input is applied. A response arriving for a
+      superseded input leaves the displayed content unchanged, whatever order
+      the responses arrive in.
+    failure_mode: >
+      Search results for a prefix of what the user typed, or a previously
+      selected tab's content shown under the newly selected tab, with no error
+      and no way for the user to tell it is stale.
+    given_when_then:
+      given: "A search where the request for \"a\" resolves after the request for \"ab\""
+      when: "The user types \"ab\" and both responses arrive"
+      then: "The results for \"ab\" remain displayed"
+    automatable: yes
+    seen_in:
+      - source: "Responses to concurrent requests carry no ordering guarantee"
+        kind: folklore
+        verified: false
+    related:
+      - async.core.result-matches-the-request
+      - async.lifecycle.response-after-teardown
+
+  - id: async.lifecycle.response-after-teardown
+    title: A response arrives after its view is gone
+    category: failure
+    risk: high
+    applies_when:
+      - views can be closed, navigated away from, or unmounted while loading
+    question: >
+      If the user navigates away while a request is in flight, what does the
+      handler write to when the response arrives?
+    why: >
+      The request outlives the thing that made it. Its callback still holds a
+      reference to state that no longer belongs to anything on screen, so it
+      writes into a discarded context or throws. The user is already looking at
+      the next screen, so the symptom appears somewhere unrelated to the cause.
+    observable: >
+      Navigating away from a view while its request is pending produces no error
+      and no visible effect on the new view when that response arrives.
+      Repeating the navigation many times does not accumulate pending work or
+      degrade the interface.
+    failure_mode: >
+      A console error on every navigation, a memory leak from retained handlers,
+      or content from the previous screen flashing onto the current one.
+    given_when_then:
+      given: "A view with a slow request in flight"
+      when: "The user navigates away before it resolves, then it resolves"
+      then: "No error occurs and the current view is unaffected"
+    automatable: yes
+    seen_in:
+      - source: "AbortController and AbortSignal, the platform mechanism for cancelling in-flight fetches"
+        kind: spec
+        verified: false
+    related:
+      - async.ordering.stale-response-overwrites-fresh
+
+  - id: async.contract.loading-error-empty-are-distinct
+    title: Loading, empty, and failed look the same on screen
+    category: contract
+    risk: foundational
+    applies_when:
+      - any view that fetches a collection
+    why: >
+      All three render as "nothing here" if the view only tracks data and its
+      absence. The user cannot tell whether to wait, retry, or accept that there
+      is nothing — and each calls for a different action. Two booleans are
+      usually added later, after someone reports the wrong one.
+    observable: >
+      The view distinguishes four states and shows a different, identifiable
+      treatment for each: loading, loaded with content, loaded but empty, and
+      failed. A failure offers a way to retry; an empty result does not present
+      itself as a failure.
+    given_when_then:
+      given: "A list view backed by a request"
+      when: "The request is pending, returns items, returns none, and fails"
+      then: "Each of the four produces a distinguishable, identifiable state"
+    automatable: yes
+    seen_in:
+      - source: "Standard state enumeration for asynchronous data views"
+        kind: folklore
+        verified: false
+    related:
+      - async.ux.loading-flash-on-fast-response
+
+  - id: async.ux.loading-flash-on-fast-response
+    title: A spinner appears and vanishes too fast to read
+    category: ux
+    risk: medium
+    applies_when:
+      - a loading indicator is shown for requests that are usually fast
+    question: >
+      What does the interface look like when the response takes 80 milliseconds
+      — is a spinner shown at all, and for how long?
+    why: >
+      A loading indicator shown immediately and hidden on arrival flickers when
+      the response is fast, which reads as a glitch rather than as progress.
+      Suppressing it entirely is worse on a slow connection, where the interface
+      appears frozen. The right behaviour depends on a duration nobody measures
+      during development, where responses are near-instant.
+    observable: >
+      For a response arriving faster than the indicator's appearance delay, no
+      indicator is shown. Once shown, the indicator remains visible for at least
+      a minimum duration rather than disappearing immediately, so it never
+      appears for less time than it takes to perceive.
+    failure_mode: >
+      A visible flicker on every interaction, which users read as instability,
+      or a frozen-looking interface on slow connections.
+    given_when_then:
+      given: "A view whose request usually resolves in under 100ms"
+      when: "Responses arrive at 80ms and at 3s"
+      then: "The fast one shows no indicator; the slow one shows a stable one"
+    automatable: partial
+    seen_in:
+      - source: "Nielsen Norman Group — response time limits and the 0.1s / 1s / 10s thresholds"
+        kind: spec
+        verified: false
+    related:
+      - async.contract.loading-error-empty-are-distinct
+
+  - id: async.duplicate.repeated-trigger-while-pending
+    title: The same request is fired again while the first is pending
+    category: race
+    risk: high
+    applies_when:
+      - a control can be activated repeatedly (button, refresh, scroll trigger)
+      - the request has side effects or is expensive
+    question: >
+      What happens when the user clicks refresh three times, or an infinite
+      scroll trigger fires twice before the first page returns?
+    why: >
+      A control stays interactive while its request is in flight because
+      disabling it requires knowing the request exists. Each activation starts
+      independent work; for reads this wastes a round trip and risks reordering,
+      and for writes it duplicates the effect. Infinite scroll is the common
+      case, where the trigger re-enters view before the first response lands.
+    observable: >
+      Activating a control repeatedly while its request is pending results in
+      the work being performed once. For a paged list, the same page is not
+      appended twice and no page is skipped, however rapidly the trigger fires.
+    failure_mode: >
+      Duplicate rows appended to an infinite list, or a write performed several
+      times from one user intent.
+    given_when_then:
+      given: "An infinite scroll list whose next-page request is pending"
+      when: "The trigger fires twice more before the response arrives"
+      then: "One page is appended, with no duplicates or gaps"
+    automatable: yes
+    seen_in:
+      - source: "Recurring consequence of leaving controls live during in-flight requests"
+        kind: folklore
+        verified: false
+    related:
+      - async.ordering.stale-response-overwrites-fresh
+
+  - id: async.recovery.retry-is-available-and-honest
+    title: A failed request leaves the user with no way forward
+    category: failure
+    risk: high
+    applies_when:
+      - requests can fail from network conditions
+    question: >
+      After a request fails, can the user retry without reloading the page — and
+      does retrying actually re-request rather than replay the cached failure?
+    why: >
+      Error states are usually built to display a message, not to offer a route
+      out. Where a retry does exist, it often re-runs a code path that returns
+      the memoised failure, so the button appears to do nothing. Both leave
+      reloading as the only option, and a reload loses whatever the user had
+      entered.
+    observable: >
+      A failed request presents a retry affordance that issues a new request
+      when activated, and a subsequent success replaces the error state with
+      content. Retrying does not require a page reload and does not discard
+      unsaved input elsewhere on the screen.
+    failure_mode: >
+      Users reload the page to recover, losing form input, or press a retry
+      button that silently re-serves the cached failure.
+    given_when_then:
+      given: "A view whose request has failed"
+      when: "The user activates retry and the request then succeeds"
+      then: "Content replaces the error without a reload"
+    automatable: yes
+    seen_in:
+      - source: "Standard error-recovery affordance for asynchronous views"
+        kind: folklore
+        verified: false
+    related:
+      - async.contract.loading-error-empty-are-distinct
+
+  - id: async.partial.one-of-several-requests-fails
+    title: One request in a group fails and the whole screen shows an error
+    category: failure
+    risk: medium
+    applies_when:
+      - a view composes data from several independent requests
+    question: >
+      If the sidebar's request fails but the main content succeeds, does the
+      user see the content?
+    why: >
+      Composed views usually gate rendering on all requests completing, because
+      a single loading flag is simpler than one per source. Any failure then
+      hides everything, including data that arrived perfectly well. The blast
+      radius of a failure becomes the whole screen rather than the part that
+      failed.
+    observable: >
+      When one of several independent requests fails, the sections backed by
+      successful requests render their content, and the failure is indicated
+      within its own section rather than replacing the view. Each failed section
+      can be retried without re-requesting the ones that succeeded.
+    failure_mode: >
+      A non-essential widget's failure blanks the entire page, so a degraded
+      dependency reads to users as a total outage.
+    given_when_then:
+      given: "A view composed of a main region and a sidebar, each fetching"
+      when: "The sidebar request fails and the main request succeeds"
+      then: "Main content renders and the failure is scoped to the sidebar"
+    automatable: yes
+    seen_in:
+      - source: "Graceful degradation applied to composed data views"
+        kind: folklore
+        verified: false
+    related:
+      - async.recovery.retry-is-available-and-honest
+
+  - id: async.state.optimistic-update-not-rolled-back
+    title: An optimistic update stays on screen after the write fails
+    category: data-integrity
+    risk: high
+    applies_when:
+      - the interface updates immediately and confirms with the server after
+    question: >
+      When the server rejects a change the interface already showed as done,
+      does the screen return to the truth?
+    why: >
+      Optimistic updates apply locally and reconcile on response, and the
+      rollback path is the one that never runs during development because the
+      server always accepts. The user is left believing a change was saved that
+      was not, and will only discover it on a reload — possibly much later,
+      after acting on the belief.
+    observable: >
+      A change the server rejects is reverted on screen to the last
+      server-confirmed value, and the user is told the change did not take
+      effect. The reverted state matches what a fresh load of the same data
+      shows.
+    failure_mode: >
+      A user believes a setting was changed, a message sent, or an item deleted,
+      and finds out otherwise on a later visit.
+    given_when_then:
+      given: "A toggle that updates the interface before the server confirms"
+      when: "The server rejects the change"
+      then: "The toggle returns to its prior state and the failure is surfaced"
+    automatable: yes
+    seen_in:
+      - source: "Reconciliation requirement of optimistic UI updates"
+        kind: folklore
+        verified: false
+    related:
+      - async.recovery.retry-is-available-and-honest
+
+  - id: async.timeout.request-that-never-resolves
+    title: A request hangs and the interface waits forever
+    category: failure
+    risk: medium
+    applies_when:
+      - requests are made without an explicit timeout
+      - mobile or unreliable networks are in scope
+    question: >
+      If a request never resolves — the connection dropped mid-flight without
+      closing — how long does the spinner spin?
+    why: >
+      A dropped mobile connection often produces no error at all; the socket
+      simply stops. Without an explicit timeout the promise stays pending
+      indefinitely and the interface stays in its loading state, which is the
+      one state offering the user no action. It looks like a hang because it is.
+    observable: >
+      A request that produces no response within the configured timeout
+      transitions the view into its error state with a retry available, rather
+      than remaining in loading. The bound holds when the connection is dropped
+      without being closed.
+    failure_mode: >
+      A permanent spinner on a mobile connection, with the app appearing frozen
+      and no path forward except force-quitting.
+    given_when_then:
+      given: "A view loading data over an interrupted connection"
+      when: "No response arrives at all"
+      then: "The view enters its error state within the timeout and offers retry"
+    automatable: partial
+    seen_in:
+      - source: "fetch() has no default timeout; AbortSignal.timeout() is the platform mechanism"
+        kind: spec
+        verified: false
+    related:
+      - async.recovery.retry-is-available-and-honest
+
+  - id: async.focus.content-shifts-under-the-user
+    title: Late-arriving content moves what the user was about to click
+    category: ux
+    risk: medium
+    applies_when:
+      - content loads in stages into an already-interactive view
+    question: >
+      When a slower section finishes loading, does the content the user is
+      reading or aiming at move?
+    why: >
+      Sections resolve at different times, and each insertion reflows whatever
+      is below it. On a fast connection every section lands before the user
+      reacts, so the problem is invisible in development. On a slow one the user
+      is already reading, and the thing they were about to tap moves as their
+      finger comes down.
+    observable: >
+      Content arriving after the initial render does not displace content the
+      user is already viewing or interacting with: space is reserved before
+      arrival, or late content is inserted outside the current viewport. No
+      element the user could be about to activate changes position at the moment
+      it arrives.
+    failure_mode: >
+      A user taps the wrong control because a banner loaded above it, or loses
+      their reading position as the article reflows.
+    given_when_then:
+      given: "A view where a secondary section resolves after the main content"
+      when: "The user is reading the main content and the section arrives"
+      then: "The main content does not move"
+    automatable: partial
+    seen_in:
+      - source: "Cumulative Layout Shift, as defined by the Web Vitals initiative"
+        kind: spec
+        verified: false
+    related:
+      - async.ux.loading-flash-on-fast-response
+
+  - id: async.cache.stale-data-shown-as-current
+    title: Cached content is shown without any sign it may be old
+    category: data-integrity
+    risk: medium
+    applies_when:
+      - responses are cached and served while revalidating
+      - the data changes and users act on it
+    question: >
+      When cached content is displayed while a fresh request is in flight, can
+      the user tell they are looking at a previous result?
+    why: >
+      Serving cached data immediately is what makes an interface feel fast, and
+      the revalidation is deliberately invisible. That is right for content and
+      wrong for anything a decision rests on — a balance, an availability, a
+      status. The user cannot distinguish "current" from "as of some earlier
+      point", and nothing on screen offers the distinction.
+    observable: >
+      Where cached data is displayed pending revalidation, the view indicates
+      that it may not be current, and updates in place when fresh data arrives.
+      For data users act on, the currency of what is displayed is discoverable
+      without a reload.
+    failure_mode: >
+      A user acts on a stale balance or an availability that changed minutes
+      ago, and the interface gave no indication anything was pending.
+    given_when_then:
+      given: "A view serving cached data while revalidating"
+      when: "The cached value differs from the fresh one"
+      then: "Staleness is indicated and the value updates in place on arrival"
+    automatable: partial
+    seen_in:
+      - source: "RFC 9111 section 4.2 — freshness, staleness, and required staleness indication"
+        kind: spec
+        verified: false
+    related:
+      - async.state.optimistic-update-not-rolled-back

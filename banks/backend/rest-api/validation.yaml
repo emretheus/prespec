@@ -1,0 +1,425 @@
+domain: backend/rest-api/validation
+side: backend
+version: 1
+description: >
+  How an endpoint treats the input it is given: what it accepts, what it
+  rejects, and what it silently transforms on the way through. Covers types,
+  absence, size, encoding, and the gap between "valid according to the parser"
+  and "valid according to the business". Excludes authorization of the caller,
+  which lives in backend/auth, and the shape of the response, which lives in
+  backend/rest-api/error-contract.
+
+cases:
+  - id: validation.core.valid-input-is-accepted
+    title: Well-formed input is accepted and applied exactly as given
+    category: happy-path
+    risk: foundational
+    applies_when:
+      - any endpoint accepting a request body or parameters
+    why: >
+      The baseline every rejection case is measured against. Worth asserting
+      because a validator that is too strict fails in the same direction as one
+      that is correct: everything gets rejected, every negative test passes, and
+      the suite stays green while the endpoint is unusable.
+    observable: >
+      A request containing only valid values succeeds, and reading the resulting
+      record back returns the values that were sent — not coerced to a different
+      type, not trimmed of meaningful content, not defaulted over. Optional
+      fields left out do not prevent acceptance.
+    given_when_then:
+      given: "A request body where every field holds a documented valid value"
+      when: "It is submitted and the resulting record is read back"
+      then: "The stored values equal the submitted ones"
+    automatable: yes
+    seen_in:
+      - source: "Defining property of an endpoint that accepts input"
+        kind: folklore
+        verified: false
+    related:
+      - validation.contract.rejection-names-the-field
+      - validation.type.silent-coercion
+
+  - id: validation.contract.rejection-names-the-field
+    title: A rejection says which field was wrong and why
+    category: contract
+    risk: foundational
+    applies_when:
+      - endpoint validates more than one field
+      - a human or another program must act on the rejection
+    why: >
+      Validation errors are usually raised at the first failure and rendered
+      from whatever the framework produced. The caller receives "invalid
+      request" and has to guess, or a stack trace and has to parse prose. Both
+      turn a two-second fix into a support conversation, and neither is stable
+      enough for a client to branch on.
+    observable: >
+      A rejection identifies each offending field by the name used in the
+      request, states what was wrong with it in a machine-readable form, and
+      reports every invalid field rather than stopping at the first. The
+      structure is identical whichever field failed, so a client parses one
+      shape.
+    given_when_then:
+      given: "A request with three fields, two of them invalid"
+      when: "It is submitted"
+      then: "The rejection names both invalid fields, using their request names"
+    automatable: yes
+    seen_in:
+      - source: "RFC 9457 — Problem Details for HTTP APIs, including per-field problem extensions"
+        kind: spec
+        verified: false
+    related:
+      - validation.security.error-leaks-internals
+
+  - id: validation.absence.null-vs-missing-vs-empty
+    title: Null, absent, and empty string are treated as one thing
+    category: boundary
+    risk: high
+    applies_when:
+      - endpoint supports partial updates
+      - fields are optional or nullable
+    question: >
+      Does omitting a field mean "leave it alone", while sending null means
+      "clear it" — and does the endpoint actually distinguish the two?
+    why: >
+      Most deserializers collapse the distinction: an absent field and an
+      explicit null both arrive as null, so the handler cannot tell "don't touch
+      this" from "erase this". The bug only appears on partial updates, where a
+      client sending one changed field silently wipes every field it omitted.
+    observable: >
+      For an update, omitting a field leaves its stored value unchanged, while
+      sending an explicit null clears it, and sending an empty string stores an
+      empty string. All three are distinguishable in the stored record after the
+      request.
+    failure_mode: >
+      A client updating only a display name blanks the user's address, phone,
+      and preferences, with no error and no indication anything else changed.
+    given_when_then:
+      given: "A record with several populated optional fields"
+      when: "An update sends one field, omits a second, and nulls a third"
+      then: "The omitted field is unchanged and the nulled field is cleared"
+    automatable: yes
+    seen_in:
+      - source: "RFC 7396 — JSON Merge Patch, which defines null as delete and absence as no-op"
+        kind: spec
+        verified: false
+    related:
+      - validation.core.valid-input-is-accepted
+
+  - id: validation.type.silent-coercion
+    title: A wrong type is coerced instead of rejected
+    category: data-integrity
+    risk: high
+    applies_when:
+      - input arrives as JSON, form data, or query parameters
+      - the language coerces types implicitly
+    question: >
+      What happens when a number field receives the string "5", a boolean
+      receives "false", or an array receives a single value?
+    why: >
+      Query parameters have no types at all, and many stacks coerce eagerly to
+      be helpful. The string "false" becomes boolean true in most languages,
+      because a non-empty string is truthy. The request succeeds, the wrong
+      value is stored, and nothing anywhere reports a problem.
+    observable: >
+      A field declared as a number rejects a non-numeric string rather than
+      storing zero or NaN; a boolean field rejects arbitrary strings rather than
+      coercing by truthiness; the string "false" never becomes true. Where
+      coercion is intentional it is documented, and the coerced result is what
+      the caller would expect rather than what the language does.
+    failure_mode: >
+      A feature flag sent as "false" enables the feature, or a quantity of "3.5"
+      silently stores 3 with no rounding notice.
+    given_when_then:
+      given: "An endpoint with numeric and boolean fields"
+      when: "It receives the string \"false\" for the boolean and \"abc\" for the number"
+      then: "Both are rejected rather than coerced"
+    automatable: yes
+    seen_in:
+      - source: "Truthiness rules for non-empty strings across mainstream languages"
+        kind: folklore
+        verified: false
+    related:
+      - validation.core.valid-input-is-accepted
+
+  - id: validation.size.unbounded-payload
+    title: No limit on body size, string length, or array elements
+    category: failure
+    risk: high
+    applies_when:
+      - endpoint accepts a request body
+      - any field is a string or collection
+    question: >
+      What is the maximum accepted body size, string length, and array length —
+      and what happens one byte past each?
+    why: >
+      Length limits feel like a detail during development, where every payload
+      is small. In production a single large request can exhaust memory during
+      parsing, before any handler code runs and before any authorization is
+      checked. The parser is the first thing an unauthenticated caller reaches.
+    observable: >
+      A body above the documented maximum is rejected with a client error before
+      it is fully buffered into memory, and rejection happens for oversized
+      requests whether or not the caller is authenticated. Individual string and
+      array fields have documented maxima and are rejected past them.
+    failure_mode: >
+      Memory exhaustion from one unauthenticated request, or a stored value so
+      large that every later read of that record times out.
+    given_when_then:
+      given: "An endpoint documenting maximum body and field sizes"
+      when: "A request exceeds each maximum in turn"
+      then: "Each is rejected with a client error and memory stays bounded"
+    automatable: yes
+    seen_in:
+      - source: "RFC 9110 section 15.5.14 — 413 Content Too Large"
+        kind: spec
+        verified: false
+    related:
+      - validation.encoding.multibyte-length-limits
+
+  - id: validation.encoding.multibyte-length-limits
+    title: Length is counted in bytes where users count characters
+    category: boundary
+    risk: medium
+    applies_when:
+      - user-supplied text is length-limited
+      - users may write non-ASCII text
+    question: >
+      Is a 50-character limit 50 bytes, 50 code points, or 50 grapheme clusters
+      — and does the database agree with the validator?
+    why: >
+      Each layer counts differently. A validator counting code points accepts a
+      name that a byte-limited column truncates mid-character, producing invalid
+      encoding in storage. Emoji and combining marks make one visible character
+      span several code points, so a user counting on screen and a system
+      counting internally disagree by a factor of four.
+    observable: >
+      Text at the documented limit is accepted and stored intact for scripts
+      beyond ASCII, including emoji and combining marks, and reading it back
+      returns exactly what was sent. Text beyond the limit is rejected rather
+      than silently truncated, and the limit means the same thing in the
+      validator and in storage.
+    failure_mode: >
+      A name in a non-Latin script is truncated mid-character and stored as
+      invalid bytes, breaking every later read of that record.
+    given_when_then:
+      given: "A field limited to 50 characters"
+      when: "50 emoji and 50 characters of a non-Latin script are submitted"
+      then: "Both are accepted and read back byte-identical"
+    automatable: yes
+    seen_in:
+      - source: "Unicode Standard Annex 29 — grapheme cluster boundaries versus code points"
+        kind: spec
+        verified: false
+    related:
+      - validation.size.unbounded-payload
+
+  - id: validation.trust.client-supplied-server-fields
+    title: The client sets a field only the server should control
+    category: security
+    risk: high
+    applies_when:
+      - request body is bound directly onto a model or entity
+      - the model has fields the caller must not set
+    question: >
+      If the request body contains an unexpected field — role, owner id, price,
+      verified — does it reach the stored record?
+    why: >
+      Binding a body straight onto a model is the shortest path and the default
+      in most frameworks. Every field on that model becomes writable by anyone
+      who guesses its name, including ones added later by someone who never
+      considered the endpoint. The vulnerability is introduced by a change
+      somewhere else entirely.
+    observable: >
+      Fields the caller is not permitted to set are ignored or rejected rather
+      than applied, verified by reading the record back after sending them. This
+      holds for fields added to the model later, because the endpoint accepts an
+      allowlist rather than filtering a denylist.
+    failure_mode: >
+      A user registers with an extra role field and becomes an administrator, or
+      sets their own price on an order.
+    given_when_then:
+      given: "A registration endpoint bound to a user model with a role field"
+      when: "A request includes a role of administrator"
+      then: "The stored record does not have that role"
+    automatable: yes
+    seen_in:
+      - source: "OWASP API Security — Broken Object Property Level Authorization (mass assignment)"
+        kind: vulnerability-class
+        verified: false
+    related:
+      - validation.core.valid-input-is-accepted
+
+  - id: validation.semantics.parseable-but-nonsensical
+    title: Input passes the schema and still makes no sense
+    category: data-integrity
+    risk: high
+    applies_when:
+      - fields have relationships to each other
+      - fields carry real-world meaning (dates, quantities, money)
+    question: >
+      Is an end date before its start date rejected? A negative quantity? A
+      discount larger than the total?
+    why: >
+      Schema validation checks each field alone, so every field can be
+      individually valid while the combination is impossible. These checks live
+      in business logic, which is written after the schema and often assumes the
+      schema already prevented nonsense. Neither layer owns the relationship.
+    observable: >
+      Requests whose fields are individually valid but jointly impossible are
+      rejected: an end before its start, a negative quantity or amount, a
+      discount exceeding the total. Rejection happens before any state is
+      written, so no partial record survives the invalid request.
+    failure_mode: >
+      A booking with negative duration bills a negative amount, or a discount
+      larger than the total produces a refund the business never authorised.
+    given_when_then:
+      given: "An endpoint accepting a start date, end date, and quantity"
+      when: "End precedes start, and quantity is negative"
+      then: "Both are rejected and nothing is written"
+    automatable: yes
+    seen_in:
+      - source: "The gap between syntactic and semantic validation in layered API design"
+        kind: folklore
+        verified: false
+    related:
+      - validation.type.silent-coercion
+
+  - id: validation.security.error-leaks-internals
+    title: A validation error reveals how the system is built
+    category: security
+    risk: medium
+    applies_when:
+      - validation errors are returned to untrusted callers
+    question: >
+      Does a rejection expose a column name, SQL fragment, file path, stack
+      frame, or internal service name?
+    why: >
+      The most useful error for a developer is the most useful error for an
+      attacker, and the default framework rendering is written for the
+      developer. These messages are set up in development where nobody is
+      hostile, and the difference between environments is a configuration flag
+      that gets missed.
+    observable: >
+      Rejections returned to untrusted callers contain no internal identifiers:
+      no database column or table names, no query fragments, no file paths, no
+      stack frames, no internal hostnames. The detail exists in server-side logs
+      instead, correlatable to the response by an identifier.
+    failure_mode: >
+      Error messages map the schema and the ORM for an attacker, turning
+      guesswork into a directed search.
+    given_when_then:
+      given: "An endpoint in its production configuration"
+      when: "Requests are sent that trigger validation and internal errors"
+      then: "No response contains internal identifiers, paths, or stack frames"
+    automatable: yes
+    seen_in:
+      - source: "OWASP — Improper error handling and information exposure through error messages"
+        kind: vulnerability-class
+        verified: false
+    related:
+      - validation.contract.rejection-names-the-field
+
+  - id: validation.injection.content-stored-then-rendered
+    title: Input is validated for shape but not for what it becomes later
+    category: security
+    risk: high
+    applies_when:
+      - user text is stored and later rendered, exported, or interpolated
+    question: >
+      What happens to a value that is a valid string but a payload elsewhere —
+      a formula in a CSV export, markup in an email, a template expression?
+    why: >
+      Validation asks whether input fits the field; it cannot know every context
+      the value will later reach. A name is a valid name and also a valid
+      spreadsheet formula. The endpoint that accepts it and the exporter that
+      renders it are usually written years apart by different people, and the
+      escaping responsibility falls between them.
+    observable: >
+      Text that is meaningful in a downstream context is stored verbatim and
+      neutralised at the point of rendering: it appears as literal text in an
+      exported file, in generated HTML, and in outbound messages, rather than
+      being interpreted. Round-tripping the value through storage returns it
+      unchanged.
+    failure_mode: >
+      A stored value beginning with an equals sign executes as a formula when a
+      colleague opens the export, or renders as active markup in a notification
+      email.
+    given_when_then:
+      given: "A text field whose values are later exported and emailed"
+      when: "A value that is a valid formula and a value containing markup are stored"
+      then: "Both appear as literal text downstream and are unchanged in storage"
+    automatable: yes
+    seen_in:
+      - source: "OWASP — CSV injection (formula injection) and output encoding guidance"
+        kind: vulnerability-class
+        verified: false
+    related:
+      - validation.encoding.multibyte-length-limits
+
+  - id: validation.whitespace.invisible-differences
+    title: Values differing only in whitespace are treated as distinct
+    category: ux
+    risk: low
+    applies_when:
+      - values are compared, deduplicated, or used as identifiers
+      - values are typed or pasted by users
+    question: >
+      Does a pasted email with a trailing space match the stored one, and can
+      two accounts exist whose names differ only by a space?
+    why: >
+      Copy and paste routinely carries leading or trailing whitespace, and
+      nothing about it is visible. An exact comparison treats the two as
+      different values, so a login fails, a lookup misses, or a duplicate
+      appears — while both values look identical wherever a human inspects them.
+    observable: >
+      Values used as identifiers are normalised consistently at every entry
+      point, so a value submitted with surrounding whitespace matches the one
+      stored without it. Two records cannot exist whose identifying values
+      differ only in leading, trailing, or repeated internal whitespace.
+    failure_mode: >
+      A user cannot log in with a pasted email, or a duplicate account is
+      created that no search will ever show next to the original.
+    given_when_then:
+      given: "A stored record identified by an email address"
+      when: "The same address is submitted with a trailing space"
+      then: "It matches the existing record rather than creating a second"
+    automatable: yes
+    seen_in:
+      - source: "Common consequence of exact-match comparison on user-entered identifiers"
+        kind: folklore
+        verified: false
+
+  - id: validation.state.valid-input-invalid-transition
+    title: Input is valid but the record cannot be in that state yet
+    category: state-transition
+    risk: high
+    applies_when:
+      - entities move through a lifecycle (draft, active, cancelled, refunded)
+    question: >
+      Can a cancelled order be shipped, a refunded payment refunded again, or a
+      published post moved back to draft?
+    why: >
+      Validation checks the request against the schema, not against the record's
+      current state. Each transition is usually implemented as its own endpoint
+      that assumes it was called at the right time, because the UI only offers
+      it at the right time — an assumption that holds until someone calls the
+      API directly or clicks twice.
+    observable: >
+      A transition that is not legal from the record's current state is refused,
+      and the record remains in its prior state with no side effects performed.
+      This holds when the transition is requested twice in quick succession, so
+      the second request cannot observe an intermediate state and proceed.
+    failure_mode: >
+      A cancelled order ships, or a refund is issued twice for one payment
+      because both requests read the state before either wrote it.
+    given_when_then:
+      given: "An order in the cancelled state"
+      when: "A ship request is submitted, and a duplicate refund is requested twice"
+      then: "Both are refused and no side effect occurs"
+    automatable: yes
+    seen_in:
+      - source: "Finite state machine invariants applied to entity lifecycles"
+        kind: folklore
+        verified: false
+    related:
+      - validation.semantics.parseable-but-nonsensical
