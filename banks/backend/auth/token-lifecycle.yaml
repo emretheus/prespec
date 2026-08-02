@@ -1,0 +1,475 @@
+domain: backend/auth/token-lifecycle
+side: backend
+version: 1
+description: >
+  Boundary and race conditions in the lifetime of access and refresh tokens:
+  issuance, expiry, refresh, and revocation. Assumes stateless bearer tokens
+  (JWT or opaque) validated per request. Excludes login credential handling and
+  the client-side consequences of expiry, which live in frontend/state/auth-ui.
+
+cases:
+  - id: token.expiry.expires-mid-request
+    title: Token expires while a long request is still being processed
+    category: boundary
+    risk: high
+    applies_when:
+      - auth is validated once at request entry
+      - some requests take longer than a few seconds
+      - request has side effects
+    question: >
+      If authorization is checked at the start of a request that then runs for
+      thirty seconds, and the token expires during it, does the work complete or
+      abort partway?
+    why: >
+      Auth is checked once in middleware, before the handler runs. Work that
+      began while authorized can finish while unauthorized, and nothing
+      re-evaluates it. The danger is not the check itself but partial side
+      effects: an operation that wrote half its state before something
+      downstream re-validated the token and refused.
+    observable: >
+      An operation whose token expires during processing either completes fully
+      or leaves no state behind. Reading back the affected records after the
+      request shows either every write applied or none of them, never a subset,
+      and any error returned states that no changes were persisted.
+    failure_mode: >
+      A record is created but its dependent rows are not, the client receives a
+      401, retries, and creates a duplicate of the half-written entity.
+    given_when_then:
+      given: "A valid token expiring in 2 seconds"
+      when: "A multi-step write operation taking 5 seconds is invoked with it"
+      then: "The affected records show either all writes applied or none"
+    automatable: yes
+    seen_in:
+      - source: "RFC 6749 section 1.5 — short-lived access tokens motivate the refresh token flow"
+        kind: spec
+        verified: false
+    related:
+      - token.refresh.concurrent-refresh-race
+      - token.revocation.propagation-delay
+
+  - id: token.expiry.clock-skew-between-services
+    title: Issuer and validator clocks disagree
+    category: failure
+    risk: medium
+    applies_when:
+      - token carries absolute expiry or not-before timestamps
+      - issuing and validating services run on different hosts
+    question: >
+      If the validating service's clock runs ahead of the issuer's, is a
+      freshly issued token rejected as expired or not-yet-valid?
+    why: >
+      Expiry is an absolute timestamp compared against local time. A few seconds
+      of drift between hosts makes a token issued moments ago appear expired, or
+      one with a not-before claim appear to be from the future. The failure is
+      intermittent, affects only some instances, and disappears when clocks
+      resync — so it is usually misdiagnosed as a flaky client.
+    observable: >
+      A token whose expiry is within a small tolerance of the current time is
+      accepted rather than rejected, and the same tolerance applies to
+      not-before claims. The accepted window is bounded and documented rather
+      than unlimited.
+    failure_mode: >
+      Intermittent 401s on a subset of instances immediately after login, with
+      no correlation to user or endpoint.
+    given_when_then:
+      given: "A token issued by a host whose clock is slightly behind the validator's"
+      when: "The token is presented immediately after issuance"
+      then: "It is accepted, within a bounded and documented skew tolerance"
+    automatable: yes
+    seen_in:
+      - source: "RFC 7519 section 4.1.4 — implementers may provide small leeway for clock skew"
+        kind: spec
+        verified: false
+
+  - id: token.refresh.concurrent-refresh-race
+    title: Parallel requests refresh the same token simultaneously
+    category: race
+    risk: high
+    applies_when:
+      - refresh tokens are rotated on use
+      - client can have several requests in flight
+    question: >
+      When several requests notice the same expired access token at once and all
+      call refresh, does the client end up logged out?
+    why: >
+      With rotation, the first refresh invalidates the old refresh token and
+      issues a new one. Concurrent refreshes present the same now-invalid token,
+      and every one after the first is rejected. Because rejection of a reused
+      refresh token is treated as a theft signal, the correct security response
+      — invalidate the whole session — fires on a completely benign race.
+    observable: >
+      Several simultaneous refreshes using the same valid refresh token result
+      in the client holding a working access token afterwards, and the session
+      remains usable. The number of concurrent refreshes does not change the
+      outcome.
+    failure_mode: >
+      Users are logged out at random, more often on slow connections and on
+      pages that fire several requests at load, and the pattern is untraceable
+      because each refresh looks individually correct.
+    given_when_then:
+      given: "One valid refresh token and an expired access token"
+      when: "Five refresh requests are issued concurrently with that token"
+      then: "The client holds a working access token and the session survives"
+    automatable: yes
+    seen_in:
+      - source: "RFC 6749 section 10.4 — refresh token reuse detection and its interaction with rotation"
+        kind: spec
+        verified: false
+    related:
+      - token.refresh.reuse-detection-false-positive
+      - token.expiry.expires-mid-request
+
+  - id: token.refresh.reuse-detection-false-positive
+    title: Legitimate retry looks like refresh token theft
+    category: race
+    risk: high
+    applies_when:
+      - refresh token rotation with reuse detection
+      - clients retry on network failure
+    question: >
+      If a refresh succeeds server-side but the response is lost in transit and
+      the client retries with the old token, is the whole session revoked?
+    why: >
+      Reuse detection cannot distinguish an attacker replaying a stolen token
+      from a client that never received the rotated one. A dropped response is
+      indistinguishable from theft at the point of decision, and the safe
+      response to theft is the harshest possible outcome for a legitimate user.
+    observable: >
+      Presenting a refresh token that was rotated moments earlier, from the same
+      client, returns the token pair issued by that rotation rather than
+      revoking the session. Presenting a token rotated long ago, or from a
+      different client context, is treated as reuse.
+    failure_mode: >
+      Users on unstable connections are logged out and must re-authenticate,
+      and the logs record a security event that did not occur.
+    given_when_then:
+      given: "A refresh that succeeded server-side but whose response was lost"
+      when: "The client retries with the same pre-rotation refresh token"
+      then: "The originally issued token pair is returned and the session survives"
+    automatable: yes
+    seen_in:
+      - source: "RFC 6749 section 10.4 — reuse of a refresh token as an indication of compromise"
+        kind: spec
+        verified: false
+      - source: "Idempotent retry windows as documented for payment APIs, applied to rotation"
+        kind: vendor-docs
+        verified: false
+    related:
+      - token.refresh.concurrent-refresh-race
+
+  - id: token.revocation.propagation-delay
+    title: Revoked token still works until it expires
+    category: security
+    risk: high
+    applies_when:
+      - stateless token validation (signature only, no lookup)
+      - logout, password change, or account suspension exists
+    question: >
+      After a user logs out or an account is suspended, how long does an already
+      issued access token keep working?
+    why: >
+      Stateless validation is chosen precisely to avoid a lookup per request, so
+      nothing consults revocation state. Logout deletes the token client-side,
+      which is invisible to an attacker who already copied it. The window
+      between revocation and expiry is exactly the token lifetime, and during it
+      the system behaves as though nothing was revoked.
+    observable: >
+      A token presented after its session was revoked is rejected, and the delay
+      between revocation and consistent rejection across instances stays within
+      a documented bound. Revocation applies to the tokens issued for that
+      session specifically, not merely to newly issued ones.
+    failure_mode: >
+      A suspended employee retains API access for the remaining token lifetime,
+      and a stolen token survives the user's password change.
+    given_when_then:
+      given: "An active access token and its session"
+      when: "The session is revoked and the token is presented afterwards"
+      then: "The request is rejected within the documented propagation bound"
+    automatable: yes
+    seen_in:
+      - source: "RFC 7009 — token revocation endpoint and the semantics of revoking related tokens"
+        kind: spec
+        verified: false
+    related:
+      - token.revocation.password-change-scope
+
+  - id: token.revocation.password-change-scope
+    title: Password change does not invalidate existing sessions
+    category: security
+    risk: high
+    applies_when:
+      - password change or reset exists
+      - sessions outlive a single request
+    question: >
+      When a user changes their password because they believe they were
+      compromised, are the attacker's existing sessions terminated?
+    why: >
+      Password change updates a credential; sessions are a separate store. The
+      code paths are usually written by different people at different times, and
+      nothing fails if they are not connected. The user's mental model is that
+      changing the password locks intruders out, and the system quietly does not
+      honour it.
+    observable: >
+      After a password change, tokens issued before it are rejected on all
+      devices, while the session that performed the change either remains valid
+      or is deliberately re-established. Which of the two happens is consistent
+      rather than incidental.
+    failure_mode: >
+      A user changes their password in response to a compromise and the attacker
+      keeps full access until the token expires naturally.
+    given_when_then:
+      given: "Two active sessions for one user"
+      when: "The password is changed from the first session"
+      then: "The second session's token is rejected on its next request"
+    automatable: yes
+    seen_in:
+      - source: "OWASP Session Management — session invalidation on credential change"
+        kind: vulnerability-class
+        verified: false
+    related:
+      - token.revocation.propagation-delay
+
+  - id: token.validation.algorithm-confusion
+    title: Token header dictates which algorithm verifies it
+    category: security
+    risk: high
+    applies_when:
+      - JWT or any token whose header names its own algorithm
+      - verification library accepts the header's algorithm
+    question: >
+      Is the verification algorithm fixed by server configuration, or read from
+      the token's own header?
+    why: >
+      Trusting the header lets the presenter choose how their token is checked.
+      Setting it to none removes verification; switching an RSA-signed token to
+      HMAC makes the verifier use the public key as a shared secret, which the
+      attacker also has. In both cases the token is forged with information that
+      is public by design.
+    observable: >
+      A token whose header declares an algorithm other than the one the server
+      is configured to accept is rejected, including the none algorithm and a
+      symmetric algorithm substituted for an asymmetric one, regardless of
+      whether the signature is otherwise well-formed.
+    failure_mode: >
+      Complete authentication bypass — any user can mint a token asserting any
+      identity, using only the public key.
+    given_when_then:
+      given: "A server configured to accept RS256 tokens"
+      when: "Tokens declaring none and HS256 signed with the public key are presented"
+      then: "Both are rejected"
+    automatable: yes
+    seen_in:
+      - source: "RFC 8725 sections 3.1 and 3.2 — algorithm verification and explicit typing"
+        kind: spec
+        verified: false
+      - source: "JWT algorithm confusion, a recurring vulnerability class in JWT libraries"
+        kind: vulnerability-class
+        verified: false
+    related:
+      - token.validation.claims-not-checked
+
+  - id: token.validation.claims-not-checked
+    title: Signature is valid but audience and issuer are not checked
+    category: security
+    risk: high
+    applies_when:
+      - tokens are issued by a shared identity provider
+      - more than one service or environment trusts that issuer
+    question: >
+      Does verification confirm that this token was issued for this service, or
+      only that the signature is intact?
+    why: >
+      A valid signature proves the issuer minted the token, not that it was
+      minted for the service now reading it. Where several services trust one
+      provider, a token legitimately obtained for a low-privilege service is
+      accepted by a high-privilege one. Signature verification feels complete,
+      so the audience check is easy to omit and impossible to notice.
+    observable: >
+      A correctly signed token whose audience names a different service, or
+      whose issuer is not the configured one, is rejected. Rejection depends on
+      the claim values rather than on the signature, and applies to tokens
+      issued for other environments of the same service.
+    failure_mode: >
+      A token from a staging environment or a low-privilege sibling service
+      grants access to production, with valid signatures throughout.
+    given_when_then:
+      given: "A correctly signed token whose audience names another service"
+      when: "It is presented to this service"
+      then: "It is rejected despite the valid signature"
+    automatable: yes
+    seen_in:
+      - source: "RFC 7519 sections 4.1.1 and 4.1.3 — issuer and audience claim validation"
+        kind: spec
+        verified: false
+    related:
+      - token.validation.algorithm-confusion
+
+  - id: token.expiry.no-expiry-or-excessive-lifetime
+    title: Token has no expiry or a lifetime measured in months
+    category: security
+    risk: high
+    applies_when:
+      - token lifetime is configurable
+      - tokens are stored by clients
+    question: >
+      What is the actual configured access token lifetime in production, and is
+      there any path that issues a token without an expiry claim?
+    why: >
+      Long lifetimes are introduced to stop users complaining about re-login, or
+      inherited from a development configuration where expiry was inconvenient.
+      Every other control degrades accordingly, because revocation, rotation and
+      compromise recovery are all bounded by this number. A missing expiry claim
+      is worse and often passes verification silently.
+    observable: >
+      Every issued token carries an expiry claim, and the interval between
+      issuance and expiry stays within the documented maximum on all issuance
+      paths, including refresh and any service-to-service flow. A token without
+      an expiry claim is rejected at verification.
+    failure_mode: >
+      A leaked token from a log or a browser extension remains usable
+      indefinitely, and no revocation mechanism reaches it.
+    given_when_then:
+      given: "Every code path that issues a token"
+      when: "A token is obtained from each"
+      then: "All carry an expiry within the documented maximum"
+    automatable: yes
+    seen_in:
+      - source: "RFC 6749 section 10.3 — access token lifetime and credential exposure"
+        kind: spec
+        verified: false
+
+  - id: token.storage.leaked-via-url-or-log
+    title: Token appears in a URL, log line, or error report
+    category: security
+    risk: high
+    applies_when:
+      - tokens can be passed as query parameters
+      - requests are logged or errors are reported to a third party
+    question: >
+      Can a token reach a place that outlives the request — an access log, a
+      referrer header, an error tracker, or a browser history entry?
+    why: >
+      Query strings are logged by default at every hop and forwarded in referrer
+      headers to third parties. Error reporters serialize request context
+      wholesale. None of these are considered credential stores, so nobody
+      applies retention or access controls to them, and the token stays readable
+      long after it was useful.
+    observable: >
+      Tokens supplied as query parameters are rejected, and any token present in
+      a request is redacted in log output and in error reports. Verifying this
+      means inspecting emitted logs for the token value, not only inspecting the
+      code that writes them.
+    failure_mode: >
+      Live credentials sitting in log aggregation, readable by anyone with log
+      access and retained far beyond the token's lifetime.
+    given_when_then:
+      given: "A request carrying a token, and a request that triggers an error"
+      when: "Emitted logs and error reports are inspected"
+      then: "The token value appears in neither"
+    automatable: yes
+    seen_in:
+      - source: "RFC 6750 section 2.3 — URI query parameter method and its documented drawbacks"
+        kind: spec
+        verified: false
+
+  - id: token.issuance.privilege-frozen-at-issue-time
+    title: Permission change does not affect an already issued token
+    category: boundary
+    risk: high
+    applies_when:
+      - roles or permissions are embedded as token claims
+      - permissions can change during a session
+    question: >
+      When a user's role is downgraded, does their current token still carry the
+      old permissions until it expires?
+    why: >
+      Embedding claims is what makes stateless validation possible, and it means
+      the token is a snapshot of authorization at issuance. Granting a
+      permission appears to work immediately in testing because users log out
+      and back in; revoking one does not, and nobody tests revocation with a
+      token obtained beforehand.
+    observable: >
+      An action permitted by a token's embedded claims but not by the user's
+      current permissions is refused, and the delay between the permission
+      change and consistent refusal stays within a documented bound.
+    failure_mode: >
+      A user removed from an administrative role retains administrative access
+      for the token's remaining lifetime, including through an offboarding.
+    given_when_then:
+      given: "A token carrying an administrative role claim"
+      when: "The role is revoked and an administrative action is attempted"
+      then: "The action is refused within the documented bound"
+    automatable: yes
+    seen_in:
+      - source: "Inherent to self-contained tokens; RFC 6749 section 10.3 motivates short lifetimes for this reason"
+        kind: spec
+        verified: false
+    related:
+      - token.revocation.propagation-delay
+
+  - id: token.error.expired-vs-invalid-indistinguishable
+    title: Client cannot tell an expired token from a rejected one
+    category: ux
+    risk: medium
+    applies_when:
+      - clients refresh automatically on 401
+    question: >
+      Does the response distinguish a merely expired token from one that is
+      malformed, revoked, or insufficiently privileged?
+    why: >
+      All of these return 401, so a client that refreshes on 401 will retry
+      forever against a revoked session, and one that logs out on 401 will
+      discard a session that only needed refreshing. The client must choose a
+      strategy without the information required to choose correctly.
+    observable: >
+      Rejection responses distinguish expiry, which the client should resolve by
+      refreshing, from conditions that refreshing cannot resolve. A client acting
+      on that distinction stops retrying against a revoked session and refreshes
+      an expired one, without inspecting message text.
+    failure_mode: >
+      A retry loop hammering the refresh endpoint after revocation, or users
+      logged out on every routine expiry.
+    given_when_then:
+      given: "An expired token and a revoked token"
+      when: "Both are presented to the same endpoint"
+      then: "The responses are distinguishable by a stable field, not by message text"
+    automatable: yes
+    seen_in:
+      - source: "RFC 6750 section 3.1 — invalid_token error code and WWW-Authenticate error descriptions"
+        kind: spec
+        verified: false
+
+  - id: token.refresh.expiry-outlives-session-policy
+    title: Refresh chain extends a session indefinitely
+    category: boundary
+    risk: medium
+    applies_when:
+      - refresh tokens are rotated and re-issued on each use
+      - an absolute session limit is expected by policy
+    question: >
+      Is there a maximum total session age, or can a client stay logged in
+      forever by refreshing before each expiry?
+    why: >
+      Rotation issues a fresh refresh token with a fresh expiry, so each refresh
+      resets the clock. Without an absolute limit anchored to the original
+      authentication, an active client is never required to re-authenticate. The
+      sliding window is intentional; the absence of an outer bound rarely is.
+    observable: >
+      Refreshing continuously stops working once the configured absolute session
+      age since the original authentication is exceeded, and the refusal is
+      distinguishable from an ordinary expiry so the client prompts for
+      re-authentication.
+    failure_mode: >
+      Sessions years old survive every credential rotation and offboarding
+      process that assumes sessions eventually end.
+    given_when_then:
+      given: "A session refreshed continuously since its original authentication"
+      when: "The configured absolute session age is exceeded"
+      then: "Refresh is refused and re-authentication is required"
+    automatable: partial
+    seen_in:
+      - source: "NIST SP 800-63B — reauthentication and absolute session lifetime requirements"
+        kind: spec
+        verified: false
+    related:
+      - token.refresh.concurrent-refresh-race

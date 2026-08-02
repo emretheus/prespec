@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/emre/edgewit/schema/case.schema.json",
+  "title": "edgewit bank file",
+  "description": "A single bank file: one domain, many edge cases.",
+  "type": "object",
+  "required": ["domain", "side", "version", "description", "cases"],
+  "additionalProperties": false,
+  "properties": {
+    "domain": {
+      "type": "string",
+      "description": "Dotted path matching the file location, e.g. backend/rest-api/pagination",
+      "pattern": "^(backend|frontend)/[a-z0-9-]+/[a-z0-9-]+$"
+    },
+    "side": {
+      "enum": ["backend", "frontend"],
+      "description": "Must agree with the first segment of `domain`."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bumped when case ids are renamed or removed (breaking for consumers)."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 20,
+      "description": "What this domain covers, and where its boundary is."
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "category",
+        "risk",
+        "applies_when",
+        "question",
+        "why",
+        "observable",
+        "failure_mode",
+        "given_when_then",
+        "seen_in"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+){2,}$",
+          "description": "Stable identifier, e.g. auth.token.expires-mid-request. Never reuse after removal."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 100,
+          "description": "One line, states the situation — not the fix."
+        },
+        "category": {
+          "enum": [
+            "boundary",
+            "race",
+            "failure",
+            "security",
+            "data-integrity",
+            "ux"
+          ],
+          "description": "Used to diversify retrieval results so one category cannot dominate."
+        },
+        "risk": {
+          "enum": ["high", "medium", "low"],
+          "description": "Impact if unhandled, not likelihood of occurring."
+        },
+        "applies_when": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 3 },
+          "description": "Context gates. Retrieval uses these to stay relevant."
+        },
+        "question": {
+          "type": "string",
+          "minLength": 20,
+          "description": "The question a careful engineer would ask before writing the code."
+        },
+        "why": {
+          "type": "string",
+          "minLength": 30,
+          "description": "Why this is missed. The mechanism, not the restated question."
+        },
+        "observable": {
+          "type": "string",
+          "minLength": 30,
+          "description": "Measurable correct behaviour. Assertions derive from this field."
+        },
+        "failure_mode": {
+          "type": "string",
+          "minLength": 20,
+          "description": "Concrete wrong outcome when unhandled."
+        },
+        "given_when_then": {
+          "type": "object",
+          "required": ["given", "when", "then"],
+          "additionalProperties": false,
+          "properties": {
+            "given": { "type": "string", "minLength": 5 },
+            "when": { "type": "string", "minLength": 5 },
+            "then": { "type": "string", "minLength": 5 }
+          }
+        },
+        "automatable": {
+          "enum": ["yes", "partial", "no"],
+          "default": "yes",
+          "description": "Whether a test can assert this unattended. `no` cases surface as manual notes."
+        },
+        "seen_in": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/evidence" },
+          "description": "Evidence link. See PROJECT.md section 7."
+        },
+        "related": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(\\.[a-z0-9-]+){2,}$"
+          },
+          "description": "Case ids that this one tends to pull in."
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["source", "verified"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 5,
+          "description": "Specific citation: spec clause, documented behaviour, postmortem, or first-hand bug."
+        },
+        "kind": {
+          "enum": [
+            "spec",
+            "vendor-docs",
+            "postmortem",
+            "vulnerability-class",
+            "first-hand",
+            "folklore"
+          ],
+          "default": "folklore"
+        },
+        "url": { "type": "string", "format": "uri" },
+        "verified": {
+          "type": "boolean",
+          "description": "true only once a human has opened the source and confirmed it says this. LLM-drafted entries stay false."
+        }
+      }
+    }
+  }
+}

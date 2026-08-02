@@ -1,0 +1,424 @@
+domain: backend/rest-api/pagination
+side: backend
+version: 1
+description: >
+  Boundary and consistency conditions for paginated list endpoints. Covers
+  offset-based and cursor-based schemes, and what happens when the underlying
+  collection mutates while a client is walking it. Excludes UI-side infinite
+  scroll behaviour, which lives in frontend/data-display/pagination-scroll.
+
+cases:
+  - id: pagination.offset.item-inserted-mid-scroll
+    title: Row inserted before the cursor while client is paging
+    category: data-integrity
+    risk: high
+    applies_when:
+      - offset/limit pagination
+      - collection can be written while being read
+      - default sort is newest-first
+    question: >
+      If a new row is inserted at the top of the sort order between page 1 and
+      page 2, does the client see a duplicate item, or silently skip one?
+    why: >
+      Offset counts positions, not identities. Inserting one row ahead of the
+      offset shifts every later row down by one, so the item that was last on
+      page 1 becomes first on page 2. Nothing errors; the client just receives
+      the same record twice and no code path notices.
+    observable: >
+      Walking every page of a collection that is being written to yields each
+      item id at most once. Concatenating all pages and grouping by id produces
+      no group with count greater than one, and the total count of distinct ids
+      is at least the number of items that existed for the whole walk.
+    failure_mode: >
+      Duplicated rows in an export, double-counted totals in a report, or an
+      import job that creates two records from one source item.
+    given_when_then:
+      given: "A collection of 25 items sorted newest-first, page size 10"
+      when: "Page 1 is fetched, a new item is inserted, then page 2 is fetched"
+      then: "No item id appears in both page 1 and page 2"
+    automatable: yes
+    seen_in:
+      - source: "Cursor/keyset pagination is the standard remedy documented by most major list APIs"
+        kind: folklore
+        verified: false
+    related:
+      - pagination.offset.item-deleted-mid-scroll
+      - pagination.cursor.stable-sort-key
+
+  - id: pagination.offset.item-deleted-mid-scroll
+    title: Row deleted before the cursor while client is paging
+    category: data-integrity
+    risk: high
+    applies_when:
+      - offset/limit pagination
+      - collection can be written while being read
+    question: >
+      If a row ahead of the current offset is deleted between two page requests,
+      is the item that shifts across the page boundary ever returned?
+    why: >
+      The mirror image of insertion. Deleting one row ahead of the offset pulls
+      every later row up by one, so the first item of the next page is skipped
+      entirely. This failure is worse than duplication because the missing item
+      leaves no trace — the client cannot detect it from the response alone.
+    observable: >
+      Walking every page of a collection from which items are deleted still
+      yields every item that was present at the start and not deleted during the
+      walk. No surviving item id is absent from the concatenated pages.
+    failure_mode: >
+      Records silently missing from an export or sync, with no error and no gap
+      in the page numbering to hint that anything was lost.
+    given_when_then:
+      given: "A collection of 25 items sorted newest-first, page size 10"
+      when: "Page 1 is fetched, an item from page 1 is deleted, then page 2 is fetched"
+      then: "Every item that still exists appears somewhere across the fetched pages"
+    automatable: yes
+    seen_in:
+      - source: "Direct consequence of positional offsets over a mutable ordered set"
+        kind: folklore
+        verified: false
+    related:
+      - pagination.offset.item-inserted-mid-scroll
+
+  - id: pagination.offset.beyond-end
+    title: Offset past the end of the collection
+    category: boundary
+    risk: medium
+    applies_when:
+      - offset/limit pagination
+      - client can supply an arbitrary offset
+    question: >
+      What does the endpoint return when the requested offset exceeds the total
+      row count — an empty page, a 404, or an error?
+    why: >
+      Handlers are usually written against the happy path where offset is derived
+      from a previous response. A client that jumps to an arbitrary page, or one
+      that keeps paging after the collection shrank, produces an offset with no
+      rows behind it. Whether that is "no results" or "not found" is a contract
+      decision that is almost never stated, so clients guess and guess differently.
+    observable: >
+      An offset beyond the end returns a success status with an empty item array
+      and the same envelope shape as a populated page, including any total or
+      pagination metadata fields. The response never omits the items key and
+      never returns an error status for a valid but empty range.
+    failure_mode: >
+      Client crashes dereferencing a null items array, or an ingestion loop
+      treats a 404 as a fatal error and aborts a job that was simply finished.
+    given_when_then:
+      given: "A collection containing 5 items"
+      when: "A page is requested at offset 1000"
+      then: "A success response is returned with an empty item list and intact envelope"
+    automatable: yes
+    seen_in:
+      - source: "RFC 9110 section 15.3 — 2xx for a successfully processed request with no matching members"
+        kind: spec
+        verified: false
+
+  - id: pagination.limit.unbounded-page-size
+    title: Client requests an unbounded page size
+    category: failure
+    risk: high
+    applies_when:
+      - client-controlled limit parameter
+      - collection can grow large
+    question: >
+      Is there a server-side maximum page size, and what happens when a client
+      asks for a limit far above it — clamp, reject, or comply?
+    why: >
+      Limit is usually passed straight into the query. During development the
+      table has a few hundred rows, so no bound feels necessary. In production a
+      single request for a million rows exhausts memory or holds a connection
+      long enough to starve the pool, and it is indistinguishable from a normal
+      request until it lands.
+    observable: >
+      A request with a limit above the documented maximum returns at most the
+      maximum number of items, and the response indicates the effective limit
+      that was applied rather than echoing the requested one. Behaviour is
+      identical whether the excess is small or extreme.
+    failure_mode: >
+      Memory exhaustion, connection pool starvation, or a response large enough
+      to time out at the proxy — from one unauthenticated request.
+    given_when_then:
+      given: "An endpoint documenting a maximum page size of 100"
+      when: "A request asks for a limit of 1000000"
+      then: "At most 100 items are returned and the applied limit is reported"
+    automatable: yes
+    seen_in:
+      - source: "Standard practice across major list APIs to clamp page size to a documented ceiling"
+        kind: vendor-docs
+        verified: false
+    related:
+      - pagination.limit.zero-or-negative
+
+  - id: pagination.limit.zero-or-negative
+    title: Limit of zero or a negative number
+    category: boundary
+    risk: medium
+    applies_when:
+      - client-controlled limit parameter
+    question: >
+      What does limit=0 return, and what does limit=-1 do to the generated query?
+    why: >
+      Zero and negative limits usually bypass validation written as an upper
+      bound check only. Depending on the driver, a negative limit may be ignored
+      entirely and return the whole table — turning a malformed request into the
+      unbounded page size problem through a different door.
+    observable: >
+      A zero limit returns an empty item list with a success status. A negative
+      limit is rejected with a client error naming the offending parameter, and
+      in neither case does the number of returned items exceed the documented
+      maximum.
+    failure_mode: >
+      A negative limit silently disables the clause and dumps the full table, or
+      limit=0 triggers an infinite client loop that never advances.
+    given_when_then:
+      given: "An endpoint accepting a limit parameter"
+      when: "Requests are made with limit=0 and limit=-1"
+      then: "Zero yields an empty success page; negative yields a validation error"
+    automatable: yes
+    seen_in:
+      - source: "Driver-dependent handling of negative LIMIT values in SQL query builders"
+        kind: folklore
+        verified: false
+    related:
+      - pagination.limit.unbounded-page-size
+
+  - id: pagination.cursor.stable-sort-key
+    title: Cursor built on a non-unique sort key
+    category: data-integrity
+    risk: high
+    applies_when:
+      - cursor/keyset pagination
+      - sort column is not unique (timestamps, scores, names)
+    question: >
+      If several rows share the same sort value at a page boundary, does the
+      cursor skip them or return them twice?
+    why: >
+      Keyset pagination resumes with a predicate like "sort_key greater than the
+      last value seen". When several rows share that value, a strict comparison
+      drops the ones that did not fit on the previous page, and a non-strict one
+      repeats those already returned. Timestamps look unique until two records
+      are written in the same millisecond, so this hides until traffic increases.
+    observable: >
+      Walking a collection where many rows share a single sort value returns
+      every row exactly once. The cursor comparison uses a tiebreaker on a unique
+      column, so the total distinct ids collected equals the collection size
+      regardless of how many rows share the sort value.
+    failure_mode: >
+      Rows written in the same tick are permanently invisible to any client that
+      pages through the collection, or are delivered repeatedly.
+    given_when_then:
+      given: "50 rows all sharing one identical created_at timestamp, page size 10"
+      when: "The client walks every page using the returned cursors"
+      then: "All 50 distinct row ids are returned, none more than once"
+    automatable: yes
+    seen_in:
+      - source: "Keyset pagination requires a total order; tiebreaking on a unique column is the documented remedy"
+        kind: folklore
+        verified: false
+    related:
+      - pagination.cursor.tampered-or-expired
+      - pagination.offset.item-inserted-mid-scroll
+
+  - id: pagination.cursor.tampered-or-expired
+    title: Cursor is forged, corrupted, or from an old deployment
+    category: security
+    risk: high
+    applies_when:
+      - cursor/keyset pagination
+      - cursor is opaque to the client but decodable server-side
+    question: >
+      What happens when a cursor is hand-edited, truncated, replayed by a
+      different user, or produced by a previous version of the encoding?
+    why: >
+      Cursors are usually base64 of internal state, which reads as opaque but is
+      trivially editable. Decoding without validation lets a client inject the
+      filter or sort state the cursor encodes. If the cursor also carries a
+      tenant or user scope, editing it crosses an authorization boundary while
+      looking like ordinary pagination.
+    observable: >
+      A modified, truncated, or foreign cursor is rejected with a client error
+      and returns no collection items. The scope applied to a request is derived
+      from the caller's identity, so a cursor issued for another account returns
+      the same result as a malformed one and never that account's rows.
+    failure_mode: >
+      Cross-tenant data disclosure through an edited cursor, or a 500 from a
+      decoder that assumes well-formed input.
+    given_when_then:
+      given: "A valid cursor issued to user A"
+      when: "User B replays that cursor, and a truncated variant is also sent"
+      then: "Both are rejected with a client error and no items from A are returned"
+    automatable: yes
+    seen_in:
+      - source: "OWASP API Security — Broken Object Level Authorization via client-supplied state"
+        kind: vulnerability-class
+        verified: false
+    related:
+      - pagination.cursor.stable-sort-key
+
+  - id: pagination.total.count-is-a-lie
+    title: Total count is stale relative to the returned page
+    category: data-integrity
+    risk: medium
+    applies_when:
+      - response includes a total or page count
+      - collection is written frequently
+    question: >
+      Is the total count computed in the same transaction as the page of rows, or
+      in a separate query that can observe different data?
+    why: >
+      Count and page are usually two queries. Between them the collection can
+      change, so a client can receive a total of 100 with 11 pages of 10 items,
+      or reach a page number the total advertised that now has nothing in it.
+      Under read-committed isolation this is invisible in testing because the
+      window is microseconds wide and only opens under concurrent writes.
+    observable: >
+      The reported total and the returned items come from a single consistent
+      snapshot: paging through exactly the advertised number of pages yields a
+      count of items consistent with the reported total, and no advertised page
+      index returns an error.
+    failure_mode: >
+      UI shows "page 11 of 10", a progress bar exceeds 100 percent, or a job
+      loops forever waiting to reach a total it will never match.
+    given_when_then:
+      given: "An endpoint returning both items and a total count"
+      when: "Rows are inserted concurrently while pages are being walked"
+      then: "The client never requests a page index that the total advertised but that errors"
+    automatable: partial
+    seen_in:
+      - source: "Read-committed isolation permits two statements in one request to observe different snapshots"
+        kind: spec
+        verified: false
+
+  - id: pagination.sort.injection-via-sort-param
+    title: Sort field supplied by the client reaches the query unchecked
+    category: security
+    risk: high
+    applies_when:
+      - client-controlled sort or order-by parameter
+    question: >
+      Is the sort parameter validated against an allowlist of sortable columns,
+      or interpolated into the query?
+    why: >
+      Sort fields cannot be bound as query parameters — they are identifiers, not
+      values — so the usual parameterization that protects filters does not apply
+      here. Developers who correctly parameterize every filter often build the
+      order-by clause with string concatenation, because the driver leaves no
+      other option.
+    observable: >
+      A sort parameter naming a column that is not in the documented sortable set
+      is rejected with a client error. Ordering never varies based on characters
+      outside that set, and no sort value causes a server error or a change in
+      which rows are returned.
+    failure_mode: >
+      SQL injection through the order-by clause, or disclosure of a column's
+      ordering that leaks values the endpoint does not return.
+    given_when_then:
+      given: "An endpoint documenting sortable fields of created_at and name"
+      when: "A request sorts by an undocumented column and by an injected expression"
+      then: "Both are rejected with a client error and no server error occurs"
+    automatable: yes
+    seen_in:
+      - source: "OWASP — SQL injection via identifiers that cannot be bound as parameters"
+        kind: vulnerability-class
+        verified: false
+
+  - id: pagination.empty.collection-vs-filtered-empty
+    title: Empty collection and empty filter result are indistinguishable
+    category: ux
+    risk: low
+    applies_when:
+      - list endpoint accepts filters
+      - client renders an empty state
+    question: >
+      Can a client tell whether zero results means the collection is empty or
+      that the applied filter excluded everything?
+    why: >
+      Both cases return an empty array, so the client cannot choose between
+      "create your first item" and "no matches, clear your filters". The
+      distinction requires information the response does not carry, and the
+      backend is the only place that cheaply knows it.
+    observable: >
+      A response for an empty result carries enough information to distinguish an
+      unfiltered empty collection from a filtered-to-empty one — for example an
+      unfiltered total alongside the filtered total — and this field is present
+      on every list response, not only empty ones.
+    failure_mode: >
+      New users are shown "no results match your filters" on an empty account, or
+      users with active filters are told to create an item they already have.
+    given_when_then:
+      given: "An account with zero items and an account with items excluded by a filter"
+      when: "Both list requests return zero items"
+      then: "The two responses are distinguishable without an extra request"
+    automatable: yes
+    seen_in:
+      - source: "Recurring empty-state ambiguity in list UIs"
+        kind: folklore
+        verified: false
+
+  - id: pagination.consistency.page-size-changes-mid-walk
+    title: Client changes page size partway through a walk
+    category: boundary
+    risk: low
+    applies_when:
+      - offset/limit pagination
+      - page size is client-controlled per request
+    question: >
+      If a client fetches page 1 at size 10 and then page 2 at size 25, which
+      rows does it receive, and does the server treat that as valid?
+    why: >
+      Offset is typically derived as page number multiplied by page size, so
+      changing size re-anchors the window to a different position. The client
+      believes it is continuing a walk; the server sees an unrelated request.
+      This is common when a UI lets users change "rows per page" mid-list.
+    observable: >
+      Pagination position is expressed such that changing page size does not
+      silently skip or repeat rows — either the position is absolute rather than
+      derived from page number, or a size change is rejected as inconsistent with
+      the supplied position.
+    failure_mode: >
+      Rows between the two windows are never displayed, and the user has no
+      indication that anything was skipped.
+    given_when_then:
+      given: "A collection of 100 items paged at size 10"
+      when: "The client fetches page 1 at size 10, then page 2 at size 25"
+      then: "No item is skipped relative to a consistent walk, or the request is rejected"
+    automatable: yes
+    seen_in:
+      - source: "Consequence of deriving offset from page number times page size"
+        kind: folklore
+        verified: false
+
+  - id: pagination.performance.deep-offset-scan
+    title: Deep offsets degrade until they time out
+    category: failure
+    risk: medium
+    applies_when:
+      - offset/limit pagination
+      - collection larger than a few tens of thousands of rows
+    question: >
+      How long does the last page take compared to the first, and does the
+      endpoint stay within its timeout at the maximum reachable offset?
+    why: >
+      A large offset requires the database to produce and discard every preceding
+      row, so cost grows linearly with depth while every response looks identical
+      in shape. Tests exercise page 1, monitoring reports an average dominated by
+      shallow pages, and only crawlers and export jobs reach the depth where it
+      breaks.
+    observable: >
+      Response time at the maximum reachable offset stays within the endpoint's
+      timeout budget, and does not grow proportionally with offset depth across
+      the collection's full range.
+    failure_mode: >
+      Export jobs and crawlers time out on later pages while the endpoint appears
+      healthy in aggregate latency metrics.
+    given_when_then:
+      given: "A collection with enough rows to reach a deep offset"
+      when: "The first page and the deepest reachable page are both requested"
+      then: "Both complete within the timeout budget"
+    automatable: partial
+    seen_in:
+      - source: "OFFSET requires scanning and discarding all preceding rows in common SQL engines"
+        kind: spec
+        verified: false
+    related:
+      - pagination.cursor.stable-sort-key

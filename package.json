@@ -1,0 +1,19 @@
+{
+  "name": "edgewit",
+  "version": "0.1.0",
+  "description": "Test-case-first edge case knowledge bank for AI coding agents",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "validate": "node scripts/validate.mjs",
+    "stats": "node scripts/stats.mjs"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "yaml": "^2.6.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
