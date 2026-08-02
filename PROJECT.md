@@ -1,16 +1,43 @@
-# edgewit
+# edgewit — design notes
 
-**Test-case-first behaviour specifications for AI coding agents.**
+Why this project is shaped the way it is. The README covers what it does; this
+covers the decisions behind it, including the ones that constrain what it will
+never do.
 
-A knowledge layer that answers "what must this thing actually do?" before any
-code exists — expressed as test cases, because a test case is the only spec
-format that is both unambiguous and checkable. Served to agents over MCP, with
-a skill that enforces the order.
+---
 
-## Scope note
+## 1. Problem
 
-This is **not** an edge-case checklist. Edge cases are one section of a spec.
-The full shape:
+AI agents are good at producing code and bad at interrogating a spec.
+
+Ask one for a login endpoint and you get thirty working lines. What it doesn't
+ask:
+
+- What if the token expires while the request is still being processed?
+- What if the same user logs in from three devices at once?
+- What if a password reset token is used twice?
+- Is a rate-limited request idempotent when the client retries it?
+
+None of these require creativity. They're **known, repeating, catalogable**. The
+agent's gap isn't knowledge — it's the reflex to recall the right thing at the
+right moment.
+
+edgewit externalises that reflex into a layer that runs before code is written.
+
+### Why test-case-first
+
+Writing test cases is writing down the limits of the system. Once written:
+
+- Acceptance criteria for the agent's output exist before the output does
+- Ambiguities surface while they're cheapest to resolve
+- "Done" becomes measurable
+
+This is a **spec practice**, not a QA practice. Tests here are a design tool, not
+a verification tool.
+
+### What counts as a spec
+
+Not an edge-case checklist. Edge cases are one section of five:
 
 | Section | Answers |
 |---|---|
@@ -20,122 +47,97 @@ The full shape:
 | Conditions it must survive | Races, partial failure, concurrent writes |
 | Guarantees it must not break | Security, and what the user is left believing |
 
-A bank that only records where things break produces warning lists. A bank that
-records all five produces specifications. The difference decides whether this is
-a linter's cousin or a methodology.
+A bank recording only where things break produces warning lists. Recording all
+five produces specifications. That difference decides whether this is a linter's
+cousin or a methodology.
 
 ---
 
-## 1. Problem
+## 2. What this is NOT
 
-AI ajanları kod üretmekte iyi, **spec'i sorgulamakta kötü**.
+Stated explicitly, because scope creep here is easy and fatal:
 
-Bir ajana "login endpoint yaz" dersen çalışan 30 satır yazar. Sormadığı şeyler:
-
-- Token istek işlenirken expire olursa?
-- Aynı kullanıcı 3 cihazdan aynı anda login olursa?
-- Şifre reset token'ı iki kez kullanılırsa?
-- Rate limit'e takılan istek retry edilirse idempotent mi?
-
-Bunlar "yaratıcılık" gerektirmiyor. Bunlar **bilinen, tekrarlayan, kataloglanabilir**
-şeyler. Ajanın eksiği bilgi değil, **o bilgiyi doğru anda hatırlama refleksi**.
-
-edgewit bu refleksi dışsallaştırır: kodun yazılmasından önce çalışan bir katman.
-
-### Neden "test-case-first"
-
-Test case yazmak = uygulamanın limitlerini yazmak. Limitler yazılıysa:
-
-- Ajanın üreteceği kodun kabul kriteri baştan bellidir.
-- Belirsizlikler kod yazılmadan önce yüzeye çıkar (en ucuz olduğu an).
-- "Bitti" ifadesi ölçülebilir hale gelir.
-
-Bu bir QA pratiği değil, bir **spec pratiği**. Testler burada doğrulama aracı değil,
-**tasarım aracı**.
-
----
-
-## 2. Ne DEĞİL
-
-Kapsamı korumak için, açıkça dışarıda bıraktıklarımız:
-
-| Değil | Neden |
+| Not | Why |
 |---|---|
-| Test runner | Test çalıştırmıyoruz. Case üretiyoruz, koşturmayı proje kendi yapar. |
-| Test generator (kod → test) | Var olan koddan test türetmek farklı problem. Biz kod yokken çalışırız. |
-| Linter / static analyzer | AST'ye bakmıyoruz. Niyet ve domain seviyesinde çalışıyoruz. |
-| Genel-amaçlı QA asistanı | Küratörlenmiş, dar, derin bir bank. Genişlik değil derinlik. |
-| LLM ile doldurulmuş katalog | Bank elle yazılır. LLM'e yazdırılırsa değer önermesi çöker (bkz. §7). |
+| A test runner | We produce cases. Running them is the project's job. |
+| A test generator (code → tests) | Deriving tests from existing code is a different problem. We work when no code exists. |
+| A linter or static analyzer | We never touch the AST. We work at the intent and domain level. |
+| A general-purpose QA assistant | Curated, narrow, deep. Depth over breadth. |
+| An LLM-generated catalogue | See §7 — this one is currently violated on purpose, with a plan. |
 
 ---
 
-## 3. Mimari — üç katman
+## 3. Architecture — three layers
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  SKILL katmanı  —  metodolojiyi zorlar                  │
-│  "kod yazmadan önce probe et, belirsizlikleri sor"      │
+│  SKILL      enforces the methodology                    │
+│             "spec before code, ask 2-4 questions"       │
 └────────────────────────┬────────────────────────────────┘
-                         │ çağırır
+                         │ calls
 ┌────────────────────────▼────────────────────────────────┐
-│  MCP katmanı  —  deterministik retrieval                │
-│  probe_limits / generate_test_cases / audit_coverage    │
+│  MCP        deterministic retrieval                     │
+│             define_behavior / generate / audit          │
 └────────────────────────┬────────────────────────────────┘
-                         │ okur
+                         │ reads
 ┌────────────────────────▼────────────────────────────────┐
-│  BANK katmanı  —  küratörlenmiş bilgi                   │
-│  banks/frontend/**  banks/backend/**  (YAML)            │
+│  BANK       curated knowledge                           │
+│             banks/frontend/**  banks/backend/**  (YAML) │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Neden üç katman ayrı:**
+**Why they're separate:**
 
-- Yalnız **MCP** yazarsan ajan onu çağırmayı unutur. Tool'un varlığı kullanılmasını
-  garanti etmez.
-- Yalnız **skill** yazarsan bilgi hallucinate olur. Skill davranış tarifler, veri taşımaz.
-- **Bank** MCP'den ayrı olmalı ki katkı vermek kod bilgisi gerektirmesin ve bank
-  başka yüzeylerden de (CLI, statik site, doküman) okunabilsin.
+- **MCP alone** and the agent forgets to call it. A tool existing doesn't make it
+  used.
+- **Skill alone** and the knowledge is hallucinated. A skill prescribes
+  behaviour; it carries no data.
+- **Bank separate from MCP** so contributing requires no code, and so the bank
+  can be read by other surfaces later — a CLI, a static site, documentation.
 
 ---
 
-## 4. Bank katmanı — frontend / backend ayrımı
+## 4. The bank — frontend / backend split
 
-Bu ayrım kozmetik değil. İki tarafın **kırılma modeli** temelden farklı:
+This split isn't cosmetic. The two sides have fundamentally different failure
+models:
 
-- **Backend** deterministiktir ve durum sunucudadır. Kırılmalar: eşzamanlılık, kısmi
-  başarısızlık, veri bütünlüğü, güven sınırı.
-- **Frontend** non-deterministiktir ve durum kullanıcıdadır. Kırılmalar: kullanıcı
-  zamanlaması, ağ değişkenliği, cihaz/ortam çeşitliliği, algı.
+- **Backend** is deterministic and holds its state on the server. Breakage:
+  concurrency, partial failure, data integrity, trust boundaries.
+- **Frontend** is non-deterministic and holds its state with the user. Breakage:
+  user timing, network variability, device diversity, perception.
 
-Aynı şemayı paylaşırlar ama `observable` (nasıl gözlemlenir) alanları taban tabana
-farklı üretilir. Bu yüzden ayrı ağaçlar.
+They share a schema, but their `observable` fields are written completely
+differently — a backend assertion is a value comparison, a frontend one often
+isn't automatable at all. Hence separate trees.
 
-### Ağaç
+### Target tree
 
 ```
 banks/
 ├── backend/
 │   ├── auth/
-│   │   ├── token-lifecycle.yaml       # expire, refresh race, clock skew, revocation
-│   │   ├── session.yaml               # concurrent device, fixation, logout propagation
+│   │   ├── token-lifecycle.yaml       # expiry, refresh race, clock skew, revocation
+│   │   ├── session.yaml               # concurrent devices, fixation, logout propagation
 │   │   └── password-reset.yaml        # token reuse, enumeration, expiry window
 │   ├── rest-api/
-│   │   ├── pagination.yaml            # cursor drift, page beyond end, mid-scroll delete
+│   │   ├── pagination.yaml            # cursor drift, past-the-end, mid-scroll mutation
 │   │   ├── idempotency.yaml           # retry, duplicate key, partial write
-│   │   ├── validation.yaml            # type coercion, unicode, null vs absent, size limits
-│   │   ├── error-contract.yaml        # status code semantics, leakage, partial success
+│   │   ├── validation.yaml            # coercion, unicode, null vs absent, size limits
+│   │   ├── error-contract.yaml        # status semantics, leakage, partial success
 │   │   └── versioning.yaml            # breaking change, deprecation, client skew
 │   ├── data/
-│   │   ├── transactions.yaml          # isolation, deadlock, rollback side-effect
+│   │   ├── transactions.yaml          # isolation, deadlock, rollback side effects
 │   │   ├── migrations.yaml            # backward compat, long-running, rollback
 │   │   └── constraints.yaml           # unique race, cascade delete, orphan
 │   ├── concurrency/
-│   │   ├── race-conditions.yaml       # TOCTOU, lost update, double-submit
+│   │   ├── race-conditions.yaml       # TOCTOU, lost update, double submit
 │   │   └── locking.yaml               # timeout, deadlock, lock leak
 │   ├── integration/
 │   │   ├── external-calls.yaml        # timeout, partial response, retry storm
 │   │   ├── webhooks.yaml              # replay, out-of-order, signature, at-least-once
-│   │   └── queues.yaml                # poison message, duplicate, ordering, DLQ
+│   │   ├── queues.yaml                # poison message, duplicate, ordering, DLQ
+│   │   └── mcp-server.yaml            # protocol contract, stdout purity, tool design
 │   ├── files/
 │   │   └── upload.yaml                # size, mime spoof, path traversal, interrupted
 │   └── cross-cutting/
@@ -146,324 +148,234 @@ banks/
 └── frontend/
     ├── forms/
     │   ├── validation.yaml            # sync vs async, paste, autofill, error timing
-    │   ├── submission.yaml            # double-submit, unload during submit, slow network
+    │   ├── submission.yaml            # double submit, unload mid-submit, slow network
     │   └── state-persistence.yaml     # back button, refresh, draft recovery
     ├── async-ui/
-    │   ├── loading-states.yaml        # skeleton vs spinner, flash, min-duration
-    │   ├── race-conditions.yaml       # stale response, unmount-after-fetch, out-of-order
+    │   ├── loading-states.yaml        # skeleton vs spinner, flash, min duration
+    │   ├── race-conditions.yaml       # stale response, unmount-after-fetch, ordering
     │   └── error-recovery.yaml        # retry affordance, partial failure, offline
     ├── data-display/
     │   ├── lists.yaml                 # empty, one item, 10k items, mid-list mutation
     │   ├── large-datasets.yaml        # downsampling, virtualization, threshold switch
     │   ├── pagination-scroll.yaml     # infinite scroll + back nav, scroll restore
-    │   └── text-overflow.yaml         # long words, RTL, i18n length growth, emoji
+    │   └── text-overflow.yaml         # long words, RTL, i18n growth, emoji
     ├── navigation/
     │   ├── routing.yaml               # deep link, unauth redirect + return, back/forward
     │   └── unsaved-changes.yaml       # nav guard, browser close, tab switch
     ├── input/
-    │   ├── interaction.yaml           # double-click, rapid toggle, keyboard-only, touch
+    │   ├── interaction.yaml           # double click, rapid toggle, keyboard-only, touch
     │   └── file-picker.yaml           # cancel, huge file, wrong type, drag-drop
     ├── state/
-    │   ├── auth-ui.yaml               # token expiry mid-session, multi-tab logout
+    │   ├── auth-ui.yaml               # expiry mid-session, multi-tab logout
     │   └── optimistic-updates.yaml    # rollback, conflict, offline queue
     └── cross-cutting/
-        ├── accessibility.yaml         # focus trap, announce, contrast, reduced motion
+        ├── accessibility.yaml         # focus trap, announcements, contrast, reduced motion
         ├── responsive.yaml            # breakpoint boundary, orientation, zoom 200%
-        └── performance-perception.yaml # jank, layout shift, time-to-interactive
+        └── performance-perception.yaml # jank, layout shift, time to interactive
 ```
 
-Bu ağacın tamamı **hedef**, başlangıç değil. Başlangıç kapsamı §8'de.
+This tree is a **target, not a commitment**. Domains get written when they're
+needed.
 
-### Case şeması
+### Case schema
 
-```yaml
-# banks/backend/auth/token-lifecycle.yaml
-domain: backend/auth/token-lifecycle
-version: 1
-description: >
-  Access/refresh token'ların yaşam döngüsündeki sınır durumları.
+See `schema/case.schema.json` for the authoritative definition. The fields that
+carry the design:
 
-cases:
-  - id: auth.token.expires-mid-request
-    title: Token istek işlenirken expire olur
-    category: boundary          # boundary | race | failure | security | data-integrity | ux
-    risk: high                  # high | medium | low
-    applies_when:               # retrieval filtresi — hangi bağlamda gündeme gelir
-      - stateless auth (JWT vb.)
-      - uzun süren istek işleme (>1s)
-
-    question: >
-      Auth başta doğrulanıp işlem 30 saniye sürerse, token o sırada expire olursa
-      istek tamamlanır mı, yarıda kesilir mi?
-
-    why: >
-      Auth genelde middleware'de bir kez kontrol edilir. İşlem süresi token
-      ömrüne yaklaştığında, "yetkiliyken başlayan" iş "yetkisizken" biter.
-      Yarım kalan yan etkiler en tehlikeli sonucudur.
-
-    observable: >
-      İşlem ya tamamen uygulanır ya hiç uygulanmaz. Yarım yazılmış durum
-      kalmamalı. Kesilme durumunda dönen hata, işlemin uygulanmadığını
-      belirtmeli.
-
-    failure_mode: >
-      Kısmi yazma: kayıt oluşturulmuş ama ilişkili kayıt oluşturulmamış,
-      istemci 401 alıp retry ediyor, çift kayıt.
-
-    given_when_then:
-      given: "Geçerli ama 2 saniye sonra expire olacak bir token"
-      when:  "İşlenmesi 5 saniye süren bir yazma isteği gönderilir"
-      then:  "İşlem ya tam uygulanır ya hiç uygulanmaz; kısmi durum kalmaz"
-
-    seen_in:                    # kanıt bağı — bkz. §7
-      - "RFC 6749 §1.5 (refresh token rationale)"
-      - "Stripe API: idempotency keys, 24h retention"
-
-    related:
-      - auth.token.refresh-race
-      - rest.idempotency.retry-after-timeout
-```
-
-**Şemadaki kritik alanlar:**
-
-| Alan | Neden var |
+| Field | Why it exists |
 |---|---|
-| `observable` | Bu olmadan katalog blog yazısına dönüşür. Ölçülebilir davranış tarifi. |
-| `failure_mode` | "Yanlış giderse ne olur" — riski somutlaştırır, önceliklendirmeyi mümkün kılar. |
-| `applies_when` | Retrieval'ın alakasız case döndürmesini engeller. Sinyal/gürültü oranı. |
-| `seen_in` | Kanıt bağı. "İyi fikir" ile "gerçekten olmuş" arasındaki fark. |
-| `category` | Sonuç kümesini çeşitlendirmek için (hepsi `security` dönmesin). |
-| `related` | Graf yapısı — bir case diğerini tetikler. |
+| `observable` | Without it the catalogue is a blog post, not a tool. Assertions derive from this. |
+| `failure_mode` | What going wrong looks like. Makes risk concrete and prioritisable. |
+| `applies_when` | Context gates. Keeps retrieval from returning irrelevant cases. |
+| `seen_in` | Evidence link. The difference between "good idea" and "actually happened". |
+| `category` | Diversifies results so no single kind fills the spec. |
+| `risk: foundational` | Behaviour the feature is *defined* by. Always returned, never budgeted away. |
+| `automatable` | `partial`/`no` surfaces as a manual note instead of a faked assertion. |
+| `related` | Graph structure — one case pulls in another. |
 
-Şema `schema/case.schema.json` ile doğrulanır; CI'da her PR'da koşar. Şemaya
-uymayan case merge edilmez.
+Validated in CI. Non-conforming cases don't merge.
 
 ---
 
-## 5. MCP yüzeyi
+## 5. MCP surface
 
-Üç tool. Fazlası ajanın seçim yükünü artırır ve hiçbiri düzgün kullanılmaz.
+Three tools. More would spread the agent's choice thin and none would be used
+well.
 
 ### `define_behavior`
 
-Kod yazılmadan önce çağrılır. **En önemli tool.**
+Called before code exists. **The important one.**
 
 ```
 input:
-  feature_description: string      # "kullanıcı sipariş geçmişini görebilsin"
+  feature_description: string      # "users can browse their order history"
   side: "frontend" | "backend" | "both"
-  domains?: string[]               # opsiyonel daraltma
-  depth?: "quick" | "standard" | "deep"   # ~5 / ~12 / ~25 case
+  domains?: string[]               # optional narrowing
+  depth?: "quick" | "standard" | "deep"   # ~5 / ~12 / ~25 cases
 
 output:
   matched_domains: string[]
-  spec: [{section, cases}]         # beş bölüm: ne yapmalı → neyi bozmamalı
-  open_questions: [...]            # kullanıcıya sorulacak, cevabı ajanda olmayan
-  assumed_defaults: [...]          # sorulmazsa varsayılacaklar (açıkça beyan)
-  gaps: string[]                   # bank'ın bu domainde bilmediği
+  spec: [{section, cases}]         # five sections: must do -> must not break
+  open_questions: [...]            # for the user; the agent can't answer these
+  assumed_defaults: [...]          # decided on their behalf, stated explicitly
+  gaps: string[]                   # what the bank doesn't know here
 ```
 
-Çıktı **bölümlenmiş bir spec**, düz bir case listesi değil. `happy-path` ve
-`contract` case'leri `depth`'ten bağımsız olarak hep tam gelir — bir spec'in
-"ne yapmalı" kısmını kırpıp yerine daha fazla failure mode koymak önceliği ters
-çevirmek olur.
+Output is a **sectioned spec**, not a flat list. `happy-path` and `contract`
+cases come back in full regardless of `depth` — trimming what a feature *does* to
+fit more failure modes inverts the priority.
 
-`open_questions` ürünün kalbi. Ajan bunları kullanıcıya sorar; sorulmayanlar
-`assumed_defaults` olarak açıkça beyan edilir. Sessiz varsayım yok.
+`open_questions` is the heart of it. The agent asks a few; whatever it doesn't
+ask is declared in `assumed_defaults`. No silent assumptions.
 
-`gaps` dürüstlük alanı: bank bu domainde `happy-path` case'i tutmuyorsa bunu
-söyler, ajan da uydurmak yerine kendisi yazdığını beyan eder.
+`gaps` is the honesty field: if the bank holds no defining behaviour for a
+domain, it says so rather than implying coverage.
 
 ### `generate_test_cases`
 
-Probe çıktısını çalışan test iskeletine çevirir.
+Turns a spec into runnable skeletons.
 
 ```
 input:
   cases: Case[] | case_ids: string[]
   framework: "pytest" | "vitest" | "jest" | "go-test" | "playwright" | "gherkin"
-  context?: string                 # mevcut test dosyası stili, fixture'lar
+  context?: string                 # existing test style, fixtures
 
 output:
   files: [{path, content}]
-  notes: string[]                  # otomatikleştirilemeyen, manuel doğrulama gerekenler
+  notes: string[]                  # what needs manual verification
 ```
 
-Assertion'lar `observable` alanından türer — bu yüzden `observable` zorunlu alan.
-Otomatikleştirilemeyen case'ler (örn. "algısal jank") sessizce atlanmaz, `notes`
-altında açıkça listelenir.
+Assertions derive from `observable` — which is why that field is mandatory.
+Cases marked `automatable: no` are listed in `notes`, never silently dropped.
 
 ### `audit_coverage`
 
-Var olan kodu/testi bank'a karşı diff'ler. **En çok "vay be" dedirten tool** —
-çünkü eksikliği ispatlar, öneri sunmaz.
+Diffs existing code against the bank. The one that produces the strongest
+reaction, because it proves an absence rather than offering a suggestion.
 
 ```
 input:
-  side: "frontend" | "backend" | "both"
-  test_files?: string[]            # okunacak mevcut testler
-  source_files?: string[]          # ele alınan davranışın çıkarımı için
-  domains?: string[]
+  side, test_files?, source_files?, domains?
 
 output:
-  covered: [{case_id, evidence}]        # nerede ele alınmış
+  covered: [{case_id, evidence}]
   uncovered: [{case_id, risk, why_matters}]
-  coverage_by_domain: {domain: {covered: n, total: n}}
+  coverage_by_domain: {domain: {covered, total}}
 ```
 
-### Neden bu üç tool
+### Why exactly three
 
-Her biri farklı bir ana denk gelir: **kod öncesi** (probe), **kod anı** (generate),
-**kod sonrası** (audit). Aynı bank'ı üç farklı zamanda kullanılabilir kılar. Dördüncü
-bir tool eklemek istersen, önce bu üçünden hangisinin zamanına düştüğünü sor —
-muhtemelen mevcut birinin parametresi olmalı.
+Each maps to a different moment: **before code** (define), **during** (generate),
+**after** (audit). A fourth tool should first be checked against those three
+moments — it's probably a parameter on an existing one.
 
 ---
 
-## 6. Skill yüzeyi
+## 6. Skill surface
 
-MCP bilgiyi sağlar, skill **davranışı zorlar**. Skill olmadan ajan probe etmeyi unutur.
+MCP supplies knowledge; the skill enforces behaviour. Without it the agent
+forgets to call the tool.
 
 ```
 skills/
-├── edgewit/                    # ana yönlendirici
-├── edgewit-probe/              # kod öncesi limit belirleme
-└── edgewit-audit/              # mevcut kodu bank'a karşı denetleme
+├── edgewit-spec/      # define behaviour before writing code
+└── edgewit-audit/     # check existing code against the bank  (not yet built)
 ```
 
-### `edgewit` (router)
+### `edgewit-spec` — the core methodology
 
-Tetikleyiciler: yeni bir özellik/endpoint/ekran yazma isteği, "edge case", "test
-case", "bunu nasıl test ederim", "neyi kaçırıyorum".
+1. **Don't write code yet.**
+2. Call `define_behavior` with the feature description and side.
+3. Ask the user **2–4** questions — only those where a different answer produces
+   materially different code.
+4. State the assumed defaults for everything not asked.
+5. Write the spec: short, sectioned, readable.
+6. Then tests, then code.
 
-Görev: niyeti anlayıp `edgewit-probe` veya `edgewit-audit`'e yönlendirmek.
+The documented anti-pattern: dumping twelve findings on the user. The agent
+filters and decides; the user decides only what genuinely needs them. The bank is
+raw material — the skill turns it into a decision.
 
-### `edgewit-probe` — çekirdek metodoloji
+### Why probe and audit are separate skills
 
-Zorunlu sıra:
-
-1. **Kod yazma.** Özellik tarifini `side` ile birlikte `probe_limits`'e ver.
-2. Dönen `open_questions`'ı kullanıcıya sor — hepsini değil, cevabı işi
-   **materyal olarak değiştirecek** olanları (2-4 tane).
-3. Cevaplanmayanları `assumed_defaults`'tan alıp **açıkça beyan et**.
-4. Netleşen limitleri kısa bir "limit spec" olarak yaz (madde madde, kullanıcı görsün).
-5. Ancak bundan sonra kod veya test yaz.
-
-Anti-pattern (skill'de açıkça yazılacak): probe sonucunu 20 maddelik liste olarak
-kullanıcıya boşaltmak. Ajan filtreler, önceliklendirir, karar verir. Bank ham
-malzeme; skill onu karara çevirir.
-
-### `edgewit-audit`
-
-"Şu modülde neyi kaçırdım" sorusuna cevap. `audit_coverage` çağırır, sonucu
-risk sırasına dizer, en yüksek riskli 3-5 boşluk için somut test önerir.
-
-### Bölünme mantığı
-
-Probe ve audit ayrı skill, çünkü **zamanları farklı ve davranışları çelişkili**:
-probe soru sorup bekler (yavaş, diyaloglu), audit rapor üretir (hızlı, tek atış).
-Tek skill'de birleştirilirse ikisi de bulanıklaşır.
+Their timing and behaviour conflict. Spec-ing asks questions and waits — slow,
+conversational. Audit produces a report — fast, one shot. Merged into one skill,
+both get blurred.
 
 ---
 
-## 7. Bank'ı LLM'e doldurtmama kararı
+## 7. On letting an LLM fill the bank
 
-Bu projenin **tek en önemli kararı**.
+The single most important decision here, and currently the one being bent.
 
-Değer önermesi: "LLM'in doğru anda hatırlamadığı şeyi burada tutuyorum."
-Bank'ı LLM'e yazdırırsan, LLM'in zaten ürettiği şeyi LLM'e geri servis etmiş
-olursun — önerme çöker, proje bir wrapper'a dönüşür.
+**The principle:** the value proposition is "this holds what the LLM doesn't
+reliably recall at the right moment." Generate the bank with an LLM and you're
+serving a model its own output — the proposition collapses and the project is a
+wrapper.
 
-**Kural:** her case'in `seen_in` alanı, LLM'in kafasından gelmeyen bir kaynağa
-işaret etmeli:
+**The current state:** the bank was LLM-drafted to get the structure working end
+to end. Every `seen_in` entry carries `verified: false`, and both `validate` and
+`stats` report the ratio on every run so it can't quietly become the baseline.
 
-- RFC / spesifikasyon maddesi (RFC 6749, RFC 7231, WCAG kriteri...)
-- Bilinen bir outage postmortem'i
-- Olgun bir API'nin dokümante ettiği davranış (Stripe idempotency, S3 consistency)
-- CVE sınıfı veya OWASP maddesi
-- **Kendi debug ettiğin gerçek bug** — bunlar en değerlileri, çünkü kimsede yok
+**The rule for `verified: true`:** a human opened the source and confirmed it
+says what the case claims. Acceptable sources:
 
-LLM yardımı şurada meşru: taslak metni düzeltmek, şema alanlarını doldurmak,
-YAML formatlamak. Case'in **kendisini icat etmek** için değil.
+- A spec or RFC clause with a section number
+- A published postmortem
+- Documented behaviour of a mature API
+- A vulnerability class (CWE, OWASP)
+- **A bug you personally debugged** — the most valuable kind, because nobody else
+  has it
 
-Kalite eşiği: **8 domain × 15 gerçek case**, 40 domain × generic doldurmadan
-kat kat değerli.
+LLM assistance is legitimate for drafting prose, filling schema fields, and
+formatting YAML. Not for inventing the case or its citation.
 
----
-
-## 8. Yol haritası
-
-### Faz 0 — iskelet
-- `schema/case.schema.json`
-- Şema doğrulayıcı (`scripts/validate.*`) + CI
-- Repo yapısı, README, katkı formatı (kendin için bile olsa yaz — 2 ay sonra
-  kendi şemanı hatırlamayacaksın)
-
-### Faz 1 — ilk bank (dar ve derin)
-İki domain, her biri gerçekten derin:
-
-- `backend/rest-api/pagination.yaml`
-- `backend/auth/token-lifecycle.yaml`
-
-Neden bu ikisi: ikisi de sık yazılıyor, ikisi de yanlış yazılıyor, ikisinin de
-kanıt kaynağı bol (RFC + olgun API dokümanları). Metodolojiyi kanıtlamaya yeter.
-
-Hedef: her dosyada 12-18 case, `seen_in` alanı doldurulmuş.
-
-### Faz 2 — MCP, tek tool
-Sadece `probe_limits`. Gerçek işinde kullan. Bank'ın eksikleri burada ortaya çıkar —
-onları düzelt. Diğer iki tool'u bu geri bildirim gelmeden yazma.
-
-### Faz 3 — skill
-`edgewit` + `edgewit-probe`. Metodolojiyi zorla, davranışı gözlemle.
-Probe çıktısının ajanı gerçekten yavaşlatıp yavaşlatmadığını ölç.
-
-### Faz 4 — frontend bank
-- `frontend/async-ui/race-conditions.yaml` (stale response, unmount-after-fetch)
-- `frontend/forms/submission.yaml` (double-submit, unload during submit)
-
-Frontend'in `observable` alanı zor — burada şemanın gerçekten çalışıp çalışmadığı
-test edilir. Backend'de kolay olan (assertion yazılabilir), frontend'de zor.
-
-### Faz 5 — kalan iki tool
-`generate_test_cases`, `audit_coverage`. Bank yeterince olgunlaştığında.
-
-### Faz 6 — genişleme
-Kalan domain'ler, kullanım sırasına göre. §4'teki ağaç bir hedef, bir taahhüt değil.
+Quality bar: **8 domains × 15 real cases** beats 40 domains of generic filler.
 
 ---
 
-## 9. Başarı kriterleri
+## 8. Roadmap
 
-Bu projenin işe yarayıp yaramadığını nasıl anlarız:
+**Phase 0 — skeleton** ✅
+Schema, validator with cross-file invariants, CI.
 
-1. **Kendi işinde kullanıyor musun?** Faz 3'ten sonra, yeni bir endpoint yazarken
-   probe'u refleks olarak çağırıyorsan çalışıyor demektir. Çağırmıyorsan skill
-   yeterince zorlamıyor ya da bank yeterince derin değil.
-2. **Probe çıktısı seni şaşırtıyor mu?** Dönen case'lerin hepsi zaten aklındaysa
-   bank değer katmıyor. Ayda birkaç kez "bunu düşünmemiştim" demelisin.
-3. **Audit gerçek boşluk buluyor mu?** Var olan bir projede koşturunca somut,
-   düzeltilebilir eksik bulmalı. Genel öneri üretiyorsa `observable` alanları
-   yeterince keskin değil.
+**Phase 1 — first bank** ✅
+`backend/rest-api/pagination`, `backend/auth/token-lifecycle`. Chosen because
+both are written often, written wrong often, and have abundant citable sources.
+
+**Phase 2 — one tool** ✅
+`define_behavior` only. Use it on real work; the bank's gaps surface there.
+
+**Phase 3 — skill** ✅
+`edgewit-spec`. Enforce the order, observe whether it actually slows the agent
+down in a useful way.
+
+**Phase 4 — frontend bank** ← next
+`async-ui/race-conditions`, `forms/submission`, `data-display/large-datasets`.
+This is where the schema gets tested: what's easy on the backend (write an
+assertion) is hard on the frontend.
+
+**Phase 5 — verification pass**
+Open the cited RFCs and confirm or correct the existing 30 cases. Turn
+`verified: false` into a real number.
+
+**Phase 6 — remaining two tools**
+`generate_test_cases`, `audit_coverage`, once the bank is mature enough to
+show what they should do.
 
 ---
 
-## 10. Portfolyo açısından
+## 9. Success criteria
 
-Bu bir "MCP yazdım" projesi değil, bir **metodoloji projesi**. Anlatımı şöyle:
+How to tell whether this works:
 
-> AI ajanları kod üretmekte iyi, spec'i sorgulamakta kötü. edgewit, kod yazılmadan
-> önce çalışan bir katman: küratörlenmiş bir edge-case bankı, onu ajana servis eden
-> bir MCP, ve ajanı probe etmeden kod yazmamaya zorlayan bir skill.
-
-Güçlü tarafları:
-
-- **Kanıt bağı** (`seen_in`): her iddia bir RFC'ye, postmortem'e ya da gerçek bir
-  bug'a bağlı. Bu, projeyi "iyi fikirler listesi"nden ayırır.
-- **Dar kapsam bilinçli**: §2'de ne olmadığı açıkça yazılı. Kapsam disiplini
-  gösterir.
-- **Kendi kullanımından doğmuş**: yol haritası kendi işinde kullanmayı bir faz
-  olarak içeriyor (Faz 2). Teorik değil.
-
-Anlatırken vurgulanacak asıl nokta: testler burada doğrulama aracı değil,
-**tasarım aracı**. Limitleri yazmak = spec'i yazmak.
+1. **Do you use it on your own work?** If, after Phase 3, you reach for it
+   reflexively when writing a new endpoint, it works. If not, the skill isn't
+   enforcing hard enough or the bank isn't deep enough.
+2. **Does the output surprise you?** If every returned case was already in your
+   head, the bank adds nothing. A few times a month you should think "I hadn't
+   considered that."
+3. **Does audit find real gaps?** Run against an existing project it should find
+   something concrete and fixable. If it produces generic advice, the
+   `observable` fields aren't sharp enough.

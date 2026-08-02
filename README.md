@@ -1,93 +1,165 @@
 # edgewit
 
-**Test-case-first behaviour specifications for AI coding agents.**
+**Give your coding agent the spec before it writes the code.**
 
-AI agents are good at producing code and bad at interrogating a spec. Ask one
-for an order history endpoint and you get thirty working lines — written against
-an understanding of the feature that nobody wrote down, agreed to, or checked.
+Ask an AI agent for an order history endpoint and you get thirty working lines
+in about four seconds. They're written against an understanding of the feature
+that nobody wrote down, nobody agreed to, and nobody checked.
 
-edgewit puts the specification first. Before the agent writes code, it gets the
-behaviour the feature has to have — as test cases, because a test case is the
-only spec format that is both unambiguous and checkable.
+Then you review it, and the questions start. What happens on an empty account?
+Is page size capped? What if an order arrives while someone's paging through?
+Can they sort by a column you didn't mean to expose?
 
-## What a spec is here
+None of those are hard questions. They're just late ones. edgewit asks them
+first — before the code exists to argue with — and hands the agent a
+specification to build against.
+
+```
+You: add an endpoint for users to browse their order history
+
+Agent: [calls define_behavior]
+
+      Before I write this, two things worth deciding:
+
+      1. Orders arriving while someone's paging — should they see the new
+         one mid-scroll, or a stable snapshot from when they started?
+      2. Can they sort by any column, or a fixed set?
+
+      Assuming unless you say otherwise: cursor-based paging, page size
+      capped at 100, empty account returns 200 with an empty list, and
+      every page carries the same response shape.
+```
+
+*(Those questions aren't illustrative — they're what the bank actually returns
+for that sentence, phrased for a human.)*
+
+Four seconds of code becomes two questions and five assumptions you can correct
+in one line each. That's the whole idea.
+
+---
+
+## Why test cases
+
+Because a test case is the only specification format that's both unambiguous and
+checkable. Prose specs drift from the code. Test cases either pass or don't.
+
+Write them first and three things follow:
+
+- The acceptance criteria for the agent's output exist **before the output does**
+- Ambiguities surface while they're still cheap — a sentence, not a refactor
+- "Done" becomes something you can point at
+
+Tests here are a **design tool**, not a verification tool. You're not checking
+work afterwards; you're deciding what the work is.
+
+## What counts as a spec
 
 Not an edge-case checklist. Edge cases are one section of five:
 
 | Section | Answers |
 |---|---|
-| What it must do | The feature working, on ordinary input |
-| Contract it must honour | Response shape, status codes, ordering, scope |
-| Boundaries it must hold at | Empty, one, enormous, past-the-end |
-| Conditions it must survive | Races, partial failure, concurrent writes |
-| Guarantees it must not break | Security, and what the user is left believing |
+| **What it must do** | The feature working, on ordinary input |
+| **Contract it must honour** | Response shape, status codes, ordering, scope |
+| **Boundaries it must hold at** | Empty, one, enormous, past-the-end |
+| **Conditions it must survive** | Races, partial failure, concurrent writes |
+| **Guarantees it must not break** | Security, and what the user is left believing |
 
-A bank recording only where things break produces warning lists. Recording all
-five produces specifications.
+Skip the first two and you've written a warning list. That distinction is the
+whole reason this project exists — an agent that only hears about failure modes
+still doesn't know what it's building.
 
-## Why test-case-first
+## How it works
 
-Writing test cases is writing the limits of the system down. Do it first and:
+Three layers, each doing one job:
 
-- the acceptance criteria for the agent's output exist before the output does
-- ambiguities surface while they are still cheap to resolve
-- "done" becomes measurable
+**A bank** of curated behaviour cases — YAML, one file per domain, every case
+carrying the measurable behaviour it asserts and a citation for where the
+knowledge came from.
 
-Tests here are a **design tool**, not a verification tool.
+**An MCP server** exposing `define_behavior`, which takes a plain-English
+feature description and returns the sectioned spec, the questions worth asking a
+human, and the defaults being assumed on their behalf.
 
-## Layout
-
-```
-banks/          curated behaviour cases, YAML, one file per domain
-schema/         JSON Schema every bank file is validated against
-mcp/            MCP server exposing define_behavior
-skills/         the methodology that makes agents actually call it
-scripts/        validation and bank stats
-```
+**A skill** that makes the agent actually call it — before writing code, and
+without dumping twelve findings on you. Tools don't get used just because they
+exist; the skill is what turns availability into habit.
 
 ## Try it
 
 ```bash
+git clone https://github.com/emretheus/edgewit
+cd edgewit
 npm install
-npm run validate     # schema + cross-file invariants
-npm run stats        # coverage, category spread, evidence health
+npm run stats
 ```
 
-Register the MCP server:
+Register the MCP server with Claude Code:
 
 ```bash
-claude mcp add edgewit -- node /absolute/path/to/edgewit/mcp/server.mjs
+claude mcp add edgewit -- node "$PWD/mcp/server.mjs"
 ```
 
-Then ask your agent to build something the bank covers — a paginated list
-endpoint, anything touching sessions or tokens — and it will produce the spec
-before it writes.
+Then ask for something the bank covers — a paginated list endpoint, anything
+touching sessions or tokens — and watch it spec before it writes.
 
-## Current coverage
+Install the skill by copying `skills/edgewit-spec/` into `~/.claude/skills/`.
+
+## What's in the bank
 
 | Domain | Cases |
 |---|---|
 | `backend/rest-api/pagination` | 15 |
 | `backend/auth/token-lifecycle` | 15 |
 
-Deliberately narrow. Eight domains of real cases beat forty of generic filler.
-The target tree is in [PROJECT.md](PROJECT.md).
+Deliberately narrow. Two domains of real cases are worth more than forty of
+generic filler, and a bank that pads itself to look comprehensive is one you
+stop trusting the first time it returns something obvious.
 
-## Evidence
+The target tree — REST, data, concurrency, integration, and the frontend side
+where the failure modes are completely different — is in
+[PROJECT.md](PROJECT.md).
 
-Every case carries `seen_in`, pointing at a spec clause, documented vendor
-behaviour, vulnerability class, or first-hand bug — plus a `verified` flag.
+## On evidence
 
-The current bank was **LLM-drafted**, so every entry is `verified: false`: the
-claims are sound but the citations have not been opened and confirmed by a
-human. `npm run validate` reports these and `npm run stats` tracks the ratio.
-Verifying them is ongoing.
+Every case cites where its knowledge came from: a spec clause, documented vendor
+behaviour, a vulnerability class, or a first-hand bug. Each citation carries a
+`verified` flag.
 
-This distinction matters. A bank that echoes what an LLM already knows is a
-wrapper, not a knowledge base — see [PROJECT.md](PROJECT.md) §7.
+**Right now every flag is `false.`** This bank was LLM-drafted to get the
+structure working end to end. The claims are sound and the citations point at
+real specs — RFC 6749, RFC 7519, RFC 9110 — but nobody has opened them and
+confirmed they say what the case claims. `npm run validate` reports this on
+every run and `npm run stats` tracks the ratio, so it stays visible instead of
+quietly becoming the baseline.
+
+This matters more than it looks. A bank that just echoes what an LLM already
+knows is a wrapper, not a knowledge base — if the model could generate it on
+demand, storing it bought you nothing. The value is in the part a model *can't*
+reliably produce: verified sources, and the failure someone actually hit at 3am.
+
+Verifying the existing set is the next real work.
 
 ## Status
 
-Early. `define_behavior` works end to end. `generate_test_cases` and
-`audit_coverage` are specified in PROJECT.md and deliberately unbuilt until real
-use shows what the bank is missing.
+Early, and honest about it.
+
+`define_behavior` works end to end. `generate_test_cases` (spec → runnable test
+skeletons) and `audit_coverage` (existing code → what it never handled) are
+designed in PROJECT.md and deliberately unbuilt — until the bank has been used
+in anger, building them would be guessing at what it's missing.
+
+## Structure
+
+```
+banks/       curated behaviour cases, YAML, one file per domain
+schema/      JSON Schema every bank file is validated against
+mcp/         MCP server exposing define_behavior
+skills/      the methodology that makes agents call it
+scripts/     validation and bank health
+```
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The bar for a
+new case is that it names measurable behaviour and cites where the knowledge
+came from.
+
+MIT licensed.
