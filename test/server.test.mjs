@@ -53,7 +53,7 @@ describe("protocol contract", () => {
       { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
     ]);
     assert.equal(messages.length, 1);
-    assert.equal(messages[0].result.serverInfo.name, "edgewit");
+    assert.equal(messages[0].result.serverInfo.name, "prespec");
     assert.ok(messages[0].result.capabilities.tools);
     assert.ok(messages[0].result.protocolVersion);
   });

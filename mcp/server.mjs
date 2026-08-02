@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * edgewit MCP server — stdio transport, JSON-RPC 2.0.
+ * prespec MCP server — stdio transport, JSON-RPC 2.0.
  *
  * Exposes probe_limits: the tool an agent calls BEFORE writing code, to find
  * out where the thing it is about to build tends to break.
@@ -16,11 +16,11 @@ const PROTOCOL_VERSION = "2024-11-05";
 
 const { banks, parseErrors } = await loadBanks();
 for (const { file, message } of parseErrors) {
-  process.stderr.write(`edgewit: skipping ${file}: ${message}\n`);
+  process.stderr.write(`prespec: skipping ${file}: ${message}\n`);
 }
 const caseCount = banks.reduce((n, b) => n + (b.doc.cases?.length ?? 0), 0);
 process.stderr.write(
-  `edgewit: loaded ${banks.length} bank file(s), ${caseCount} case(s)\n`,
+  `prespec: loaded ${banks.length} bank file(s), ${caseCount} case(s)\n`,
 );
 
 const TOOLS = [
@@ -30,7 +30,7 @@ const TOOLS = [
       "Produce the behaviour specification for a feature BEFORE writing code: " +
       "what it must do, the contract it must honour, the boundaries it must hold " +
       "at, the conditions it must survive, and the guarantees it must not break. " +
-      "Returns curated cases from the edgewit bank as a sectioned spec, the open " +
+      "Returns curated cases from the prespec bank as a sectioned spec, the open " +
       "questions to put to the user, and the defaults assumed on their behalf. " +
       "Call this at the start of any feature touching a covered domain — the " +
       "spec becomes the acceptance criteria the tests and the code are written " +
@@ -80,7 +80,7 @@ function handle(method, params) {
       return {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
-        serverInfo: { name: "edgewit", version: "0.1.0" },
+        serverInfo: { name: "prespec", version: "0.1.0" },
       };
 
     case "tools/list":

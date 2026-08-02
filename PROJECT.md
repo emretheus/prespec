@@ -1,4 +1,4 @@
-# edgewit — design notes
+# prespec — design notes
 
 Why this project is shaped the way it is. The README covers what it does; this
 covers the decisions behind it, including the ones that constrain what it will
@@ -22,7 +22,7 @@ None of these require creativity. They're **known, repeating, catalogable**. The
 agent's gap isn't knowledge — it's the reflex to recall the right thing at the
 right moment.
 
-edgewit externalises that reflex into a layer that runs before code is written.
+prespec externalises that reflex into a layer that runs before code is written.
 
 ### Why test-case-first
 
@@ -279,11 +279,11 @@ forgets to call the tool.
 
 ```
 skills/
-├── edgewit-spec/      # define behaviour before writing code
-└── edgewit-audit/     # check existing code against the bank  (not yet built)
+├── prespec/      # define behaviour before writing code
+└── prespec-audit/     # check existing code against the bank  (not yet built)
 ```
 
-### `edgewit-spec` — the core methodology
+### `prespec` — the core methodology
 
 1. **Don't write code yet.**
 2. Call `define_behavior` with the feature description and side.
@@ -348,7 +348,7 @@ both are written often, written wrong often, and have abundant citable sources.
 `define_behavior` only. Use it on real work; the bank's gaps surface there.
 
 **Phase 3 — skill** ✅
-`edgewit-spec`. Enforce the order, observe whether it actually slows the agent
+`prespec`. Enforce the order, observe whether it actually slows the agent
 down in a useful way.
 
 **Phase 4 — frontend bank** ← next

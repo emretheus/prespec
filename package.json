@@ -1,7 +1,7 @@
 {
-  "name": "edgewit",
+  "name": "prespec",
   "version": "0.1.0",
-  "description": "Test-case-first edge case knowledge bank for AI coding agents",
+  "description": "Test-case-first behaviour specifications for AI coding agents",
   "type": "module",
   "private": true,
   "scripts": {

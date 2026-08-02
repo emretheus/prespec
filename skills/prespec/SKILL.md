@@ -1,5 +1,5 @@
 ---
-name: edgewit-spec
+name: prespec
 description: >
   Write the behaviour specification for a feature BEFORE implementing it, as
   test cases. Use whenever you are about to build a new endpoint, screen, flow,
@@ -9,7 +9,7 @@ description: >
   Trigger BEFORE writing implementation code, not after.
 ---
 
-# edgewit-spec
+# prespec
 
 Writing the test cases first is writing the specification first. A test case is
 the only spec format that is unambiguous and checkable, which is why the spec

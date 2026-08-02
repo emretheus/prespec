@@ -21,7 +21,7 @@ const pad = (s, n) => String(s).padEnd(n);
 const row = (label, count) =>
   `  ${pad(label, 34)} ${String(count).padStart(4)}  ${"█".repeat(Math.round((count / cases.length) * 30))}`;
 
-console.log(`\nedgewit bank — ${cases.length} cases in ${banks.length} file(s)\n`);
+console.log(`\nprespec bank — ${cases.length} cases in ${banks.length} file(s)\n`);
 
 console.log("By domain");
 for (const [d, n] of [...tally(cases, (c) => c._domain)].sort())

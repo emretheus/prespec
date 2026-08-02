@@ -1,4 +1,4 @@
-# edgewit
+# prespec
 
 **Give your coding agent the spec before it writes the code.**
 
@@ -10,7 +10,7 @@ Then you review it, and the questions start. What happens on an empty account?
 Is page size capped? What if an order arrives while someone's paging through?
 Can they sort by a column you didn't mean to expose?
 
-None of those are hard questions. They're just late ones. edgewit asks them
+None of those are hard questions. They're just late ones. prespec asks them
 first — before the code exists to argue with — and hands the agent a
 specification to build against.
 
@@ -87,8 +87,8 @@ exist; the skill is what turns availability into habit.
 ## Try it
 
 ```bash
-git clone https://github.com/emretheus/edgewit
-cd edgewit
+git clone https://github.com/emretheus/prespec
+cd prespec
 npm install
 npm test         # retrieval, MCP protocol, and bank quality
 npm run stats    # what's in the bank and how healthy it is
@@ -97,13 +97,13 @@ npm run stats    # what's in the bank and how healthy it is
 Register the MCP server with Claude Code:
 
 ```bash
-claude mcp add edgewit -- node "$PWD/mcp/server.mjs"
+claude mcp add prespec -- node "$PWD/mcp/server.mjs"
 ```
 
 Then ask for something the bank covers — a paginated list endpoint, anything
 touching sessions or tokens — and watch it spec before it writes.
 
-Install the skill by copying `skills/edgewit-spec/` into `~/.claude/skills/`.
+Install the skill by copying `skills/prespec/` into `~/.claude/skills/`.
 
 ## What's in the bank
 

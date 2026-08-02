@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/emre/edgewit/schema/case.schema.json",
-  "title": "edgewit bank file",
-  "description": "A single bank file: one domain, many edge cases.",
+  "$id": "https://github.com/emretheus/prespec/schema/case.schema.json",
+  "title": "prespec bank file",
+  "description": "A single bank file: one domain, many behaviour cases.",
   "type": "object",
   "required": ["domain", "side", "version", "description", "cases"],
   "additionalProperties": false,
