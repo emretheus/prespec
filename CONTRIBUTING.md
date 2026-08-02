@@ -37,7 +37,12 @@ domain, write those cases first.
    is the reference.
 3. Run `npm run validate`. It checks the schema plus cross-file invariants: id
    uniqueness, domain/path agreement, `related` references that actually exist.
-4. Run `npm run stats` to see what your addition did to the category spread.
+4. Run `npm test`. Beyond the schema, this enforces the things that make a bank
+   worth reading and that degrade quietly: `observable` must state behaviour
+   rather than hedge ("handled properly" fails), titles must describe the
+   situation rather than prescribe a fix, `why` must explain a mechanism rather
+   than restate the question, and no domain may be dominated by one category.
+5. Run `npm run stats` to see what your addition did to the category spread.
 
 ### Field notes
 

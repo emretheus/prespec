@@ -5,6 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
     "validate": "node scripts/validate.mjs",
     "stats": "node scripts/stats.mjs"
   },

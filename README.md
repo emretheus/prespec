@@ -90,7 +90,8 @@ exist; the skill is what turns availability into habit.
 git clone https://github.com/emretheus/edgewit
 cd edgewit
 npm install
-npm run stats
+npm test         # retrieval, MCP protocol, and bank quality
+npm run stats    # what's in the bank and how healthy it is
 ```
 
 Register the MCP server with Claude Code:

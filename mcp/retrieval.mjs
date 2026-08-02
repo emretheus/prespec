@@ -74,9 +74,19 @@ function stem(term) {
 function mentions(term, terms, stems, phrase) {
   if (terms.has(term) || stems.has(stem(term))) return true;
 
-  // "login" should also be found in "log in", "signup" in "sign up".
-  const spaced = term.replace(/^(log|sign|check)(in|out|up)$/, "$1 $2");
-  return spaced !== term && phrase.includes(spaced);
+  // "login" should also be found in "log in", "signup" in "sign up" — and in
+  // "signing users in", where the verb is inflected and split at the same time.
+  const split = term.match(/^(log|sign|check)(in|out|up)$/);
+  if (split) {
+    const [, verb, particle] = split;
+    if (phrase.includes(`${verb} ${particle}`)) return true;
+    // "signing ... in": the verb is stemmed, the particle appears separately.
+    if (stems.has(verb) && new RegExp(`\\b${particle}\\b`).test(phrase)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

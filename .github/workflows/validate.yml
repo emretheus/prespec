@@ -17,5 +17,7 @@ jobs:
       - run: npm ci
       - name: Validate bank files against schema
         run: npm run validate
+      - name: Test retrieval, MCP protocol, and bank quality
+        run: npm test
       - name: Bank stats
         run: npm run stats
