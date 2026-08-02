@@ -41,14 +41,34 @@
         "category",
         "risk",
         "applies_when",
-        "question",
         "why",
         "observable",
-        "failure_mode",
         "given_when_then",
         "seen_in"
       ],
       "additionalProperties": false,
+      "allOf": [
+        {
+          "$comment": "Cases about something going wrong must say what going wrong looks like, and must pose the question a developer should be asked. Happy-path and contract cases state behaviour instead, so both fields are optional there.",
+          "if": {
+            "properties": {
+              "category": {
+                "enum": [
+                  "boundary",
+                  "state-transition",
+                  "race",
+                  "failure",
+                  "security",
+                  "data-integrity",
+                  "ux"
+                ]
+              }
+            },
+            "required": ["category"]
+          },
+          "then": { "required": ["question", "failure_mode"] }
+        }
+      ],
       "properties": {
         "id": {
           "type": "string",
@@ -63,18 +83,21 @@
         },
         "category": {
           "enum": [
+            "happy-path",
+            "contract",
             "boundary",
+            "state-transition",
             "race",
             "failure",
             "security",
             "data-integrity",
             "ux"
           ],
-          "description": "Used to diversify retrieval results so one category cannot dominate."
+          "description": "The kind of behaviour this case pins down. A feature's spec needs all of them, not only the ones where it breaks: happy-path (it does the thing), contract (response shape, status, ordering), boundary (empty/one/huge/past-the-end), state-transition (what a change does to existing state), race, failure, security, data-integrity, ux. Retrieval balances across these so no single kind fills the result."
         },
         "risk": {
-          "enum": ["high", "medium", "low"],
-          "description": "Impact if unhandled, not likelihood of occurring."
+          "enum": ["foundational", "high", "medium", "low"],
+          "description": "Impact if unhandled, not likelihood of occurring. `foundational` marks behaviour the feature is defined by — a happy-path or core contract case that belongs in every spec regardless of risk appetite, and that retrieval always returns first."
         },
         "applies_when": {
           "type": "array",

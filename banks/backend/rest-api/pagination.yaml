@@ -8,6 +8,92 @@ description: >
   scroll behaviour, which lives in frontend/data-display/pagination-scroll.
 
 cases:
+  - id: pagination.core.walks-the-whole-collection
+    title: A client walking every page receives the whole collection
+    category: happy-path
+    risk: foundational
+    applies_when:
+      - any paginated list endpoint
+    why: >
+      This is what pagination is for, and it is the property every other case in
+      this file qualifies. Stating it explicitly gives the rest something to be
+      exceptions to, and it is the assertion most test suites skip because it
+      feels too obvious to write down.
+    observable: >
+      Following pages from the first until the endpoint signals no more yields
+      every item in the collection exactly once, in the documented sort order.
+      The concatenated result equals the collection's contents, and the walk
+      terminates without the client having to impose its own page cap.
+    given_when_then:
+      given: "A collection of 25 items and a page size of 10"
+      when: "The client follows pages from the first until exhaustion"
+      then: "All 25 items are returned once each, in the documented order"
+    automatable: yes
+    seen_in:
+      - source: "Defining property of a paginated collection resource"
+        kind: folklore
+        verified: false
+    related:
+      - pagination.core.envelope-shape
+      - pagination.offset.item-inserted-mid-scroll
+
+  - id: pagination.core.envelope-shape
+    title: Every page response has the same shape
+    category: contract
+    risk: foundational
+    applies_when:
+      - any paginated list endpoint
+    why: >
+      Clients write one parser and reuse it for every page. If the last page
+      omits the cursor field, or an empty page drops the items key, or the first
+      page alone carries a total, the parser needs special cases the API never
+      documented — and those special cases are discovered in production.
+    observable: >
+      First, middle, last, and empty pages all carry the same set of keys with
+      the same types. The items key is always present and always an array, even
+      when empty. Whatever field signals "more pages exist" is present on every
+      page, including the last, where it indicates exhaustion rather than being
+      absent.
+    given_when_then:
+      given: "A collection large enough to span several pages"
+      when: "The first, a middle, the last, and a past-the-end page are fetched"
+      then: "All four responses carry an identical key set and types"
+    automatable: yes
+    seen_in:
+      - source: "Google API Improvement Proposals AIP-158 — consistent pagination fields across responses"
+        kind: vendor-docs
+        verified: false
+    related:
+      - pagination.core.walks-the-whole-collection
+      - pagination.offset.beyond-end
+
+  - id: pagination.core.scoped-to-caller
+    title: A page contains only records the caller may see
+    category: contract
+    risk: foundational
+    applies_when:
+      - collection contains records belonging to more than one user or tenant
+    why: >
+      Scoping is applied in the query that builds a page, so it is easy to apply
+      it to the item query and forget the count query, or to apply it to the
+      first page's filter and lose it when a cursor supplies its own. The happy
+      path looks correct because test accounts usually own everything they read.
+    observable: >
+      Every item on every page belongs to the caller's scope, and the reported
+      total counts only those items. This holds on the first page, on pages
+      reached by cursor, and when a filter or sort is applied.
+    given_when_then:
+      given: "Two accounts each owning items in the same collection"
+      when: "One account walks every page of the collection"
+      then: "No item belonging to the other account appears, and the total excludes them"
+    automatable: yes
+    seen_in:
+      - source: "OWASP API Security — Broken Object Level Authorization"
+        kind: vulnerability-class
+        verified: false
+    related:
+      - pagination.cursor.tampered-or-expired
+
   - id: pagination.offset.item-inserted-mid-scroll
     title: Row inserted before the cursor while client is paging
     category: data-integrity

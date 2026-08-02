@@ -1,10 +1,28 @@
 # edgewit
 
-**Test-case-first knowledge bank for AI coding agents.**
+**Test-case-first behaviour specifications for AI coding agents.**
 
-Kod yazmadan önce "bu şey nerede kırılır?" sorusunu deterministik olarak cevaplayan
-bir edge-case kataloğu + onu ajanlara servis eden bir MCP yüzeyi + o metodolojiyi
-zorlayan bir skill.
+A knowledge layer that answers "what must this thing actually do?" before any
+code exists — expressed as test cases, because a test case is the only spec
+format that is both unambiguous and checkable. Served to agents over MCP, with
+a skill that enforces the order.
+
+## Scope note
+
+This is **not** an edge-case checklist. Edge cases are one section of a spec.
+The full shape:
+
+| Section | Answers |
+|---|---|
+| What it must do | The feature working, on ordinary input |
+| Contract it must honour | Response shape, status codes, ordering, scope |
+| Boundaries it must hold at | Empty, one, enormous, past-the-end |
+| Conditions it must survive | Races, partial failure, concurrent writes |
+| Guarantees it must not break | Security, and what the user is left believing |
+
+A bank that only records where things break produces warning lists. A bank that
+records all five produces specifications. The difference decides whether this is
+a linter's cousin or a methodology.
 
 ---
 
@@ -136,6 +154,7 @@ banks/
     │   └── error-recovery.yaml        # retry affordance, partial failure, offline
     ├── data-display/
     │   ├── lists.yaml                 # empty, one item, 10k items, mid-list mutation
+    │   ├── large-datasets.yaml        # downsampling, virtualization, threshold switch
     │   ├── pagination-scroll.yaml     # infinite scroll + back nav, scroll restore
     │   └── text-overflow.yaml         # long words, RTL, i18n length growth, emoji
     ├── navigation/
@@ -225,26 +244,35 @@ uymayan case merge edilmez.
 
 Üç tool. Fazlası ajanın seçim yükünü artırır ve hiçbiri düzgün kullanılmaz.
 
-### `probe_limits`
+### `define_behavior`
 
 Kod yazılmadan önce çağrılır. **En önemli tool.**
 
 ```
 input:
-  feature_description: string      # "kullanıcı profil fotoğrafı yükleyebilsin"
+  feature_description: string      # "kullanıcı sipariş geçmişini görebilsin"
   side: "frontend" | "backend" | "both"
   domains?: string[]               # opsiyonel daraltma
   depth?: "quick" | "standard" | "deep"   # ~5 / ~12 / ~25 case
 
 output:
   matched_domains: string[]
-  cases: Case[]                    # risk'e göre sıralı, kategori-çeşitlendirilmiş
-  open_questions: string[]         # kullanıcıya sorulacak, cevabı ajanda olmayan sorular
-  assumed_defaults: string[]       # sorulmazsa varsayılacaklar (açıkça beyan)
+  spec: [{section, cases}]         # beş bölüm: ne yapmalı → neyi bozmamalı
+  open_questions: [...]            # kullanıcıya sorulacak, cevabı ajanda olmayan
+  assumed_defaults: [...]          # sorulmazsa varsayılacaklar (açıkça beyan)
+  gaps: string[]                   # bank'ın bu domainde bilmediği
 ```
 
-`open_questions` alanı ürünün kalbi. Ajan bunları kullanıcıya sorar; sorulmayanlar
+Çıktı **bölümlenmiş bir spec**, düz bir case listesi değil. `happy-path` ve
+`contract` case'leri `depth`'ten bağımsız olarak hep tam gelir — bir spec'in
+"ne yapmalı" kısmını kırpıp yerine daha fazla failure mode koymak önceliği ters
+çevirmek olur.
+
+`open_questions` ürünün kalbi. Ajan bunları kullanıcıya sorar; sorulmayanlar
 `assumed_defaults` olarak açıkça beyan edilir. Sessiz varsayım yok.
+
+`gaps` dürüstlük alanı: bank bu domainde `happy-path` case'i tutmuyorsa bunu
+söyler, ajan da uydurmak yerine kendisi yazdığını beyan eder.
 
 ### `generate_test_cases`
 

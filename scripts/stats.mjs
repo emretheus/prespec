@@ -28,12 +28,23 @@ for (const [d, n] of [...tally(cases, (c) => c._domain)].sort())
   console.log(row(d, n));
 
 console.log("\nBy risk");
-for (const r of ["high", "medium", "low"])
+for (const r of ["foundational", "high", "medium", "low"])
   console.log(row(r, tally(cases, (c) => c.risk).get(r) ?? 0));
 
 console.log("\nBy category");
 for (const [c, n] of [...tally(cases, (x) => x.category)].sort((a, b) => b[1] - a[1]))
   console.log(row(c, n));
+
+// A domain that records only failures cannot produce a spec, only a warning
+// list. This is the most important number in the report.
+console.log("\nSpec completeness (does each domain define what the thing does?)");
+for (const { doc } of banks) {
+  const kinds = new Set(doc.cases.map((c) => c.category));
+  const missing = ["happy-path", "contract"].filter((k) => !kinds.has(k));
+  console.log(
+    `  ${pad(doc.domain, 34)} ${missing.length ? `MISSING ${missing.join(", ")}` : "complete"}`,
+  );
+}
 
 const verified = cases.filter((c) => c.seen_in.some((s) => s.verified));
 const pct = Math.round((verified.length / cases.length) * 100);

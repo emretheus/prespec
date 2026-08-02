@@ -8,7 +8,14 @@
  */
 
 const DEPTH_LIMITS = { quick: 5, standard: 12, deep: 25 };
-const RISK_WEIGHT = { high: 3, medium: 2, low: 1 };
+
+// `foundational` outranks everything: a spec missing the behaviour the feature
+// is defined by is not a spec, however many risks it enumerates.
+const RISK_WEIGHT = { foundational: 100, high: 3, medium: 2, low: 1 };
+
+// Categories that describe what the feature does, as opposed to where it breaks.
+// Every returned spec must lead with these.
+const DEFINING_CATEGORIES = new Set(["happy-path", "contract"]);
 
 const STOPWORDS = new Set([
   "the", "a", "an", "and", "or", "but", "if", "then", "for", "to", "of", "in",
@@ -132,12 +139,19 @@ function rankCases(cases, featureDescription) {
 }
 
 /**
- * Interleave by category so one category cannot fill the result set.
- * A probe returning nine security cases and nothing else is not a probe.
+ * Select the cases that make up the spec.
+ *
+ * Defining behaviour (happy-path, contract) is taken in full and is not subject
+ * to the depth limit — a spec that omits what the feature does in order to fit
+ * more failure modes has the priority backwards. The remaining budget is then
+ * interleaved across the other categories so no single one fills the result.
  */
-function diversify(ranked, limit) {
+function selectCases(ranked, limit) {
+  const defining = ranked.filter((c) => DEFINING_CATEGORIES.has(c.category));
+  const rest = ranked.filter((c) => !DEFINING_CATEGORIES.has(c.category));
+
   const buckets = new Map();
-  for (const c of ranked) {
+  for (const c of rest) {
     if (!buckets.has(c.category)) buckets.set(c.category, []);
     buckets.get(c.category).push(c);
   }
@@ -150,7 +164,8 @@ function diversify(ranked, limit) {
       if (q.length) picked.push(q.shift());
     }
   }
-  return picked;
+
+  return [...defining, ...picked];
 }
 
 /**
@@ -163,14 +178,15 @@ function openQuestions(cases) {
   const seen = new Set();
 
   for (const c of cases) {
-    if (c.risk !== "high") continue;
+    // Foundational behaviour is not a question — it is the baseline.
+    if (c.risk !== "high" || !c.question) continue;
     const key = c.id.split(".").slice(0, 2).join(".");
     if (seen.has(key)) continue;
     seen.add(key);
     questions.push({
       case_id: c.id,
       question: c.question.trim(),
-      why_it_matters: c.failure_mode.trim(),
+      why_it_matters: c.failure_mode?.trim(),
     });
   }
 
@@ -191,6 +207,31 @@ function present(c) {
   return { ...rest, domain: _domain };
 }
 
+/**
+ * Group the selected cases into the sections of a behaviour spec, so the agent
+ * receives a specification to satisfy rather than a flat list of warnings.
+ */
+function asSpec(selected) {
+  const section = (label, predicate) => {
+    const cases = selected.filter(predicate).map(present);
+    return cases.length ? { section: label, cases } : null;
+  };
+
+  return [
+    section("What it must do", (c) => c.category === "happy-path"),
+    section("Contract it must honour", (c) => c.category === "contract"),
+    section("Boundaries it must hold at", (c) =>
+      ["boundary", "state-transition"].includes(c.category),
+    ),
+    section("Conditions it must survive", (c) =>
+      ["race", "failure", "data-integrity"].includes(c.category),
+    ),
+    section("Guarantees it must not break", (c) =>
+      ["security", "ux"].includes(c.category),
+    ),
+  ].filter(Boolean);
+}
+
 export function probe(banks, { feature_description, side, domains, depth }) {
   const limit = DEPTH_LIMITS[depth ?? "standard"] ?? DEPTH_LIMITS.standard;
 
@@ -203,8 +244,12 @@ export function probe(banks, { feature_description, side, domains, depth }) {
       doc.cases.map((c) => ({ ...c, _file: file, _domain: doc.domain })),
     );
 
-  const selected = diversify(rankCases(pool, feature_description), limit);
+  const selected = selectCases(rankCases(pool, feature_description), limit);
   const asked = openQuestions(selected);
+
+  const missingDefining =
+    selected.length > 0 &&
+    !selected.some((c) => DEFINING_CATEGORIES.has(c.category));
 
   return {
     matched_domains: matched.map((m) => m.domain),
@@ -214,12 +259,23 @@ export function probe(banks, { feature_description, side, domains, depth }) {
           Object.keys(DOMAIN_TERMS).join(", ") +
           ". Proceed without bank support and note the gap."
         : undefined,
-    cases: selected.map(present),
+
+    // The spec: what to build, sectioned. This is the primary output.
+    spec: asSpec(selected),
+
+    // Decisions only the user can make. Ask 2-4 of these, not all.
     open_questions: asked,
+
+    // Everything else that was decided on their behalf. State these.
     assumed_defaults: assumedDefaults(selected, asked),
-    coverage_note:
+
+    gaps: [
+      missingDefining
+        ? "This domain has no happy-path or contract cases yet, so the spec below covers only failure modes. Define the expected normal behaviour yourself."
+        : undefined,
       selected.length < pool.length
         ? `Showing ${selected.length} of ${pool.length} matched cases at depth "${depth ?? "standard"}". Use depth "deep" for the rest.`
         : undefined,
+    ].filter(Boolean),
   };
 }

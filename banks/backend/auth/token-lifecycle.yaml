@@ -8,6 +8,66 @@ description: >
   the client-side consequences of expiry, which live in frontend/state/auth-ui.
 
 cases:
+  - id: token.core.valid-token-grants-access
+    title: A valid token grants exactly the access it represents
+    category: happy-path
+    risk: foundational
+    applies_when:
+      - any token-protected endpoint
+    why: >
+      The baseline every other case in this file qualifies. Worth asserting
+      explicitly because the negative tests are the ones that get written: a
+      suite full of rejection cases still passes if verification is broken in a
+      way that rejects everything.
+    observable: >
+      A freshly issued, unexpired token for an existing account is accepted, and
+      the request runs with that account's identity and permissions — not a
+      different account's, and not with permissions the token does not carry.
+      The same token works across repeated requests until it expires.
+    given_when_then:
+      given: "A freshly issued token for an account with a known permission set"
+      when: "It is presented to an endpoint that permission allows"
+      then: "The request succeeds and acts as that account"
+    automatable: yes
+    seen_in:
+      - source: "RFC 6750 section 2.1 — authorization request header field"
+        kind: spec
+        verified: false
+    related:
+      - token.core.absent-or-malformed-is-rejected
+      - token.validation.claims-not-checked
+
+  - id: token.core.absent-or-malformed-is-rejected
+    title: Missing, empty, or malformed credentials are refused
+    category: contract
+    risk: foundational
+    applies_when:
+      - any token-protected endpoint
+    why: >
+      Each of these travels a different code path: a missing header may never
+      reach the verifier, an empty string may pass a truthiness check that a
+      null fails, and a malformed token may throw inside the decoder rather than
+      returning a rejection. Testing one does not test the others, and a decoder
+      exception often surfaces as a 500 that some clients treat as retryable.
+    observable: >
+      Requests with no credential, an empty credential, a structurally invalid
+      one, and a well-formed one with a bad signature are all refused with a
+      client error rather than a server error, and none of them execute the
+      endpoint's effects. The response carries a challenge indicating what
+      authentication is expected.
+    given_when_then:
+      given: "An endpoint requiring authentication"
+      when: "Requests are sent with absent, empty, malformed, and badly signed credentials"
+      then: "All four are refused with a client error and none take effect"
+    automatable: yes
+    seen_in:
+      - source: "RFC 6750 section 3 — the WWW-Authenticate response header field and error codes"
+        kind: spec
+        verified: false
+    related:
+      - token.core.valid-token-grants-access
+      - token.error.expired-vs-invalid-indistinguishable
+
   - id: token.expiry.expires-mid-request
     title: Token expires while a long request is still being processed
     category: boundary

@@ -25,13 +25,16 @@ process.stderr.write(
 
 const TOOLS = [
   {
-    name: "probe_limits",
+    name: "define_behavior",
     description:
-      "Find the edge cases and failure modes for a feature BEFORE writing code. " +
-      "Returns curated cases from the edgewit bank, open questions to put to the " +
-      "user, and the defaults that will be assumed if they are not asked. Call " +
-      "this at the start of any feature that touches a covered domain — the " +
-      "point is to establish the limits of the thing before implementing it.",
+      "Produce the behaviour specification for a feature BEFORE writing code: " +
+      "what it must do, the contract it must honour, the boundaries it must hold " +
+      "at, the conditions it must survive, and the guarantees it must not break. " +
+      "Returns curated cases from the edgewit bank as a sectioned spec, the open " +
+      "questions to put to the user, and the defaults assumed on their behalf. " +
+      "Call this at the start of any feature touching a covered domain — the " +
+      "spec becomes the acceptance criteria the tests and the code are written " +
+      "against.",
     inputSchema: {
       type: "object",
       required: ["feature_description"],
@@ -58,7 +61,9 @@ const TOOLS = [
           enum: ["quick", "standard", "deep"],
           default: "standard",
           description:
-            "Roughly 5, 12, or 25 cases. Use deep before high-risk work.",
+            "How much of the spec to return beyond the defining behaviour, " +
+            "roughly 5, 12, or 25 cases. Happy-path and contract cases are " +
+            "always included in full. Use deep before high-risk work.",
         },
       },
     },
@@ -83,7 +88,7 @@ function handle(method, params) {
 
     case "tools/call": {
       const { name, arguments: args = {} } = params ?? {};
-      if (name !== "probe_limits") {
+      if (name !== "define_behavior") {
         throw Object.assign(new Error(`Unknown tool: ${name}`), {
           code: INVALID_PARAMS,
         });
