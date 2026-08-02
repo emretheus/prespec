@@ -1,6 +1,21 @@
 # prespec
 
-**Give your coding agent the spec before it writes the code.**
+**An MCP server that gives your coding agent the spec before it writes the code.**
+
+prespec holds a curated bank of behaviour cases — the things a paginated
+endpoint, or anything touching auth tokens, has to get right. You install it
+once. From then on, when you ask your agent to build a feature, it looks up what
+that kind of feature must do *before* implementing it, asks you the two or three
+decisions only you can make, and writes code against the spec instead of against
+a guess.
+
+Concretely: a YAML knowledge bank + an MCP server that serves it + a skill that
+makes the agent actually use it. Node, no external services, works with Claude
+Code and any MCP client.
+
+---
+
+## The problem it solves
 
 Ask an AI agent for an order history endpoint and you get thirty working lines
 in about four seconds. They're written against an understanding of the feature
@@ -10,9 +25,10 @@ Then you review it, and the questions start. What happens on an empty account?
 Is page size capped? What if an order arrives while someone's paging through?
 Can they sort by a column you didn't mean to expose?
 
-None of those are hard questions. They're just late ones. prespec asks them
-first — before the code exists to argue with — and hands the agent a
-specification to build against.
+None of those are hard questions. They're just late ones — and by the time you
+ask them, there's code with opinions to argue with. prespec asks them first.
+
+Here's the same request with prespec installed:
 
 ```
 You: add an endpoint for users to browse their order history
@@ -33,8 +49,9 @@ Agent: [calls define_behavior]
 *(Those questions aren't illustrative — they're what the bank actually returns
 for that sentence, phrased for a human.)*
 
-Four seconds of code becomes two questions and five assumptions you can correct
-in one line each. That's the whole idea.
+Four seconds of code became two questions and five stated assumptions, each
+correctable in one line. Nothing was decided silently. When the code does arrive,
+you already know what it's supposed to do — and so does the agent.
 
 ---
 
@@ -88,6 +105,22 @@ The reflex this encodes isn't new. It's what a careful engineer does before
 touching the keyboard: establish the limits, then build inside them. What's new
 is that it can be handed to the agent doing the typing.
 
+### "Doesn't the model already know this?"
+
+Mostly, yes — and that's the point. The gap isn't knowledge, it's **recall at the
+right moment**. Ask any decent model about cursor pagination and it will explain
+the mid-scroll duplicate problem correctly. Ask it to build an order history
+endpoint and it usually won't mention it, because nothing in the request pointed
+that way.
+
+A bank turns a maybe into a reliably. The same feature description returns the
+same cases every time, in the same order, whichever model is driving — no
+temperature, no phrasing luck, no "it caught it last week." That determinism is
+what makes it a spec rather than a second opinion.
+
+It also holds things worth keeping that no model will produce on demand: cited
+sources, and the failure a specific team actually hit at 3am.
+
 ## What counts as a spec
 
 Not an edge-case checklist. Edge cases are one section of five:
@@ -134,9 +167,9 @@ for this specific feature, available before a single line is written.
 *(Shortened for reading. The real response carries the full measurable behaviour
 for each line, plus why it matters and what breaks without it.)*
 
-## How it works
+## The three pieces
 
-Three layers, each doing one job:
+Each does one job, and each is useless without the other two:
 
 **A bank** of curated behaviour cases — YAML, one file per domain, every case
 carrying the measurable behaviour it asserts and a citation for where the
