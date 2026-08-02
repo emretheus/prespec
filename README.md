@@ -1,17 +1,24 @@
 # prespec
 
-**An MCP server that gives your coding agent the spec before it writes the code.**
+**An MCP server that writes the test cases before your coding agent writes the
+code.**
 
-prespec holds a curated bank of behaviour cases — the things a paginated
-endpoint, or anything touching auth tokens, has to get right. You install it
-once. From then on, when you ask your agent to build a feature, it looks up what
-that kind of feature must do *before* implementing it, asks you the two or three
-decisions only you can make, and writes code against the spec instead of against
-a guess.
+Test cases first, then code. That's the whole method — and it's the one thing
+agents never do on their own.
 
-Concretely: a YAML knowledge bank + an MCP server that serves it + a skill that
-makes the agent actually use it. Node, no external services, works with Claude
-Code and any MCP client.
+prespec holds a bank of ready-made test cases for the things developers build
+over and over: paginated endpoints, auth tokens, sessions. Install it once, ask
+your agent for a feature, and it pulls the test cases for that kind of feature
+*first* — before writing anything. You get the list of what the thing must do,
+two or three questions only you can answer, and then code built to pass those
+cases.
+
+The cases are already written. You don't think them up under deadline pressure;
+you look them up in a second.
+
+Concretely: a YAML bank of test cases + an MCP server that serves them + a skill
+that makes the agent use them. Node, no external services, works with Claude Code
+and any MCP client.
 
 ---
 
@@ -26,9 +33,11 @@ Is page size capped? What if an order arrives while someone's paging through?
 Can they sort by a column you didn't mean to expose?
 
 None of those are hard questions. They're just late ones — and by the time you
-ask them, there's code with opinions to argue with. prespec asks them first.
+ask them, there's code with opinions to argue with.
 
-Here's the same request with prespec installed:
+Every one of them is also a test case somebody has already written, for a
+hundred other paginated endpoints. prespec keeps those cases and hands them over
+before the code exists. Same request, with prespec installed:
 
 ```
 You: add an endpoint for users to browse their order history
@@ -57,16 +66,15 @@ you already know what it's supposed to do — and so does the agent.
 
 ## Why test cases first
 
-Writing test cases is writing down the limits of the thing. Where it starts,
-where it stops, what it refuses. Do that before the code and you've written the
-specification — you just wrote it in a format that can be checked.
+A test case is a decision you can't weasel out of.
 
-That's the part prose specs never manage. A document saying "the endpoint should
-handle pagination gracefully" survives any implementation, including the wrong
-one. `A client walking every page receives each order exactly once, even while
-new orders arrive` either holds or doesn't.
+"The endpoint should handle pagination gracefully" is compatible with every
+implementation, including the broken one. "A client walking every page receives
+each order exactly once, even while new orders arrive" is either true of your
+code or it isn't. Write enough of the second kind and you've defined the feature
+— in a form that can be checked, by you or by a machine.
 
-Three things follow from doing it first:
+Doing that before the code is what changes the outcome:
 
 - **The acceptance criteria exist before the output does.** You're not judging
   code against your memory of what you wanted.
@@ -121,9 +129,10 @@ what makes it a spec rather than a second opinion.
 It also holds things worth keeping that no model will produce on demand: cited
 sources, and the failure a specific team actually hit at 3am.
 
-## What counts as a spec
+## Which test cases
 
-Not an edge-case checklist. Edge cases are one section of five:
+Not just edge cases. A feature needs all five kinds, and edge cases are one of
+them:
 
 | Section | Answers |
 |---|---|
@@ -133,11 +142,10 @@ Not an edge-case checklist. Edge cases are one section of five:
 | **Conditions it must survive** | Races, partial failure, concurrent writes |
 | **Guarantees it must not break** | Security, and what the user is left believing |
 
-Skip the first two and you've written a warning list. That distinction is the
-whole reason this project exists — an agent that only hears about failure modes
-still doesn't know what it's building.
+Skip the first two and you've written a warning list, not a test suite. An agent
+that only hears about failure modes still doesn't know what it's building.
 
-For that order history endpoint, the spec comes back looking like this:
+For that order history endpoint, the cases come back like this:
 
 ```
 Must do
@@ -160,12 +168,12 @@ Must not break
 - Sort field validated against an allowlist.
 ```
 
-Every line is a test you can write and an assertion the agent has to satisfy.
-That's the deliverable — not advice, not a checklist, but the definition of done
-for this specific feature, available before a single line is written.
+Every line is a test you can write today and an assertion the agent has to
+satisfy. Not advice, not a checklist — the definition of done for this feature,
+available before a single line of code exists.
 
-*(Shortened for reading. The real response carries the full measurable behaviour
-for each line, plus why it matters and what breaks without it.)*
+*(Shortened for reading. Each case arrives with the full measurable behaviour to
+assert, why it matters, and what breaks without it.)*
 
 ## The three pieces
 
