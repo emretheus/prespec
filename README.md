@@ -38,19 +38,55 @@ in one line each. That's the whole idea.
 
 ---
 
-## Why test cases
+## Why test cases first
 
-Because a test case is the only specification format that's both unambiguous and
-checkable. Prose specs drift from the code. Test cases either pass or don't.
+Writing test cases is writing down the limits of the thing. Where it starts,
+where it stops, what it refuses. Do that before the code and you've written the
+specification — you just wrote it in a format that can be checked.
 
-Write them first and three things follow:
+That's the part prose specs never manage. A document saying "the endpoint should
+handle pagination gracefully" survives any implementation, including the wrong
+one. `A client walking every page receives each order exactly once, even while
+new orders arrive` either holds or doesn't.
 
-- The acceptance criteria for the agent's output exist **before the output does**
-- Ambiguities surface while they're still cheap — a sentence, not a refactor
-- "Done" becomes something you can point at
+Three things follow from doing it first:
+
+- **The acceptance criteria exist before the output does.** You're not judging
+  code against your memory of what you wanted.
+- **Ambiguity surfaces while it's still a sentence.** "Should page size be
+  capped?" costs one line now and a migration later.
+- **"Done" becomes something you can point at** instead of something you feel.
 
 Tests here are a **design tool**, not a verification tool. You're not checking
-work afterwards; you're deciding what the work is.
+work afterwards — you're deciding what the work is.
+
+### Why this matters more now
+
+Three things changed when agents started writing the code.
+
+**Writing code stopped being the bottleneck; deciding what it should do became
+one.** When an implementation costs four seconds, the expensive step is no longer
+typing it — it's discovering, after review, that it was built against the wrong
+assumption. The scarce resource moved upstream, and most tooling hasn't followed
+it there.
+
+**Agents fill silence with plausible defaults.** Ask a person to build something
+underspecified and you get questions. Ask an agent and you get a confident
+implementation — page size uncapped, sort field trusted, empty state returning
+404 — with every gap quietly resolved and none of them surfaced. The result looks
+finished, which is exactly what makes it expensive. A spec removes the silence
+that gets filled.
+
+**Specs got cheap to write, so the old excuse expired.** Test-case-first has
+always been good practice and has always lost to deadlines, because writing forty
+cases by hand before any code exists is real work. That cost is what's collapsing:
+the cases for a paginated endpoint are largely the same everywhere, so they can be
+looked up rather than reinvented. prespec is that lookup — curated cases, retrieved
+by feature description, so the spec takes a minute instead of an afternoon.
+
+The reflex this encodes isn't new. It's what a careful engineer does before
+touching the keyboard: establish the limits, then build inside them. What's new
+is that it can be handed to the agent doing the typing.
 
 ## What counts as a spec
 
@@ -67,6 +103,36 @@ Not an edge-case checklist. Edge cases are one section of five:
 Skip the first two and you've written a warning list. That distinction is the
 whole reason this project exists — an agent that only hears about failure modes
 still doesn't know what it's building.
+
+For that order history endpoint, the spec comes back looking like this:
+
+```
+Must do
+- A client walking every page receives all their orders, once each, newest first.
+
+Contract
+- Every page has the same shape; items is always an array; the cursor field is
+  present on the last page too.
+- A page contains only the caller's orders.
+
+Boundaries
+- No orders: 200 with an empty list, distinguishable from "filtered to nothing".
+- Page size above 100 returns 100.
+- Past the end: 200 with an empty list, not 404.
+
+Must survive
+- Orders arriving mid-walk: no duplicates, no skips.
+
+Must not break
+- Sort field validated against an allowlist.
+```
+
+Every line is a test you can write and an assertion the agent has to satisfy.
+That's the deliverable — not advice, not a checklist, but the definition of done
+for this specific feature, available before a single line is written.
+
+*(Shortened for reading. The real response carries the full measurable behaviour
+for each line, plus why it matters and what breaks without it.)*
 
 ## How it works
 
